@@ -130,6 +130,19 @@ li.checked::marker { content: &quot;\2612&quot;; }
     </widget>
    </item>
    <item>
+    <widget class="QProgressBar" name="progressBar">
+     <property name="value">
+      <number>100</number>
+     </property>
+     <property name="textVisible">
+      <bool>false</bool>
+     </property>
+     <property name="invertedAppearance">
+      <bool>false</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
     <layout class="QHBoxLayout" name="AnswerLayout">
      <item>
       <widget class="QPushButton" name="pushButton_2">

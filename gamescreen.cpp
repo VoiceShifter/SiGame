@@ -4,7 +4,7 @@
 #include <QTimer>
 
 GameScreen::GameScreen(signed int PlayerCount, QWidget *parent)
-      : QWidget(parent), ui(new Ui::GameScreen), gameTimer(new QTimer) {
+      : QWidget(parent), ui(new Ui::GameScreen), m_tickTimer(new QTimer), m_globalTimer(new QElapsedTimer) {
       ui->setupUi(this);
       ui->splitter->setStretchFactor(0, 2);
       ui->splitter->setStretchFactor(1, 5);
@@ -49,6 +49,23 @@ GameScreen::GameScreen(signed int PlayerCount, QWidget *parent)
             playerLayout->setStretch(0, 0);
             ui->PlayersLayout->addLayout(playerLayout);
       }
+      StartTimer();
 }
 
 GameScreen::~GameScreen() { delete ui; }
+
+void GameScreen::StartTimer()
+{
+      m_globalTimer->start();
+      m_tickTimer->start(250);
+      connect(m_tickTimer, &QTimer::timeout, this, [this](){
+            signed int value = (m_globalTimeValue - m_globalTimer->elapsed()); // / m_globalTimeValue * 100
+            if (value <= 0)
+            {
+                  m_tickTimer->stop();
+                  ui->progressBar->setValue(0);
+                  qDebug() << "Timer ran out";
+            }
+            ui->progressBar->setValue(int((value / float(m_globalTimeValue)) * 100));
+      });
+}

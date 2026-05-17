@@ -2,7 +2,7 @@
 #define GAMESCREEN_H
 
 #include <QWidget>
-
+#include <QThread>
 namespace Ui {
 class GameScreen;
 }
@@ -15,9 +15,14 @@ public:
       explicit GameScreen(signed int PlayerCount = 1, QWidget *parent = nullptr);
       ~GameScreen();
 
+private slots:
+      void StartTimer();
+
 private:
       Ui::GameScreen *ui;
-      QTimer* gameTimer;
+      QTimer* m_tickTimer;
+      QElapsedTimer *m_globalTimer;
+      unsigned int m_globalTimeValue{15000};
 };
 
 #endif // GAMESCREEN_H

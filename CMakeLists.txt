@@ -15,7 +15,8 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
 set(PROJECT_SOURCES
         main.cpp
 )
-
+set(Directory "Images")
+file(COPY ${Directory} DESTINATION ${CMAKE_BINARY_DIR})
 
 set(CMAKE_INCLUDE_CURRENT_DIR true)
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)

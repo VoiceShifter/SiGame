@@ -24,7 +24,7 @@ private:
 
 private slots:
   void loadSingleSettings();
-  void loadSingleGame();
+      void loadSingleGame(int PlayersCount);
   void loadSettings();
   void loadMultiplayer();
 };

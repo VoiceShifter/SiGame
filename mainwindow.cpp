@@ -20,9 +20,10 @@ void MainWindow::loadSingleSettings() {
           &MainWindow::loadSingleGame);
 }
 
-void MainWindow::loadSingleGame() {
+void MainWindow::loadSingleGame(int PlayersCount) {
   qDebug() << "loading single game";
-  gameScreen = new GameScreen();
+  qDebug() << PlayersCount << " - players countrer";
+  gameScreen = new GameScreen(PlayersCount);
   stack->addWidget(gameScreen);
   setCentralWidget(stack);
   stack->setCurrentWidget(gameScreen);

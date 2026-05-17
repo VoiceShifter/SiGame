@@ -13,7 +13,7 @@ SinglePlayerScreen::SinglePlayerScreen(QWidget *parent)
   connect(ui->pickPuckButton, &QPushButton::clicked, this,
           &SinglePlayerScreen::pickPack);
   connect(ui->createButton, &QPushButton::clicked, this,
-          [this]() { emit SingleGameStarted(); });
+          [this]() { emit SingleGameStarted(ui->playerCount->text().toInt()); });
 }
 
 SinglePlayerScreen::~SinglePlayerScreen() { delete ui; }

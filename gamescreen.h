@@ -12,11 +12,12 @@ class GameScreen : public QWidget
       Q_OBJECT
 
 public:
-      explicit GameScreen(QWidget *parent = nullptr);
+      explicit GameScreen(signed int PlayerCount = 1, QWidget *parent = nullptr);
       ~GameScreen();
 
 private:
       Ui::GameScreen *ui;
+      QTimer* gameTimer;
 };
 
 #endif // GAMESCREEN_H

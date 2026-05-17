@@ -18,7 +18,7 @@ private slots:
   void pickPack();
   void createGame();
 signals:
-  void SingleGameStarted();
+  void SingleGameStarted(int Players);
 
 private:
   Ui::SinglePlayerScreen *ui;

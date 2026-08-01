@@ -6,6 +6,8 @@
 #include <QMainWindow>
 #include <QStackedWidget>
 #include <QString>
+class QMessageBox;
+
 namespace Ui
 {
 class MainWindow;
@@ -24,12 +26,14 @@ class MainWindow : public QMainWindow
       QStackedWidget *stack;
       SinglePlayerScreen *singleScreen;
       GameScreen *gameScreen;
+      QMessageBox *exitPopup;
 
     private slots:
       void loadSingleSettings();
       void loadSingleGame(int PlayersCount, const QString &GamepackPath);
       void loadSettings();
       void loadMultiplayer();
+      void showExitPopup();
 };
 
 #endif // MAINWINDOW_H

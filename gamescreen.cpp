@@ -1,11 +1,32 @@
 #include "gamescreen.h"
 #include "ui_gamescreen.h"
 
+#include <QDebug>
+#include <QDir>
 #include <QTimer>
 
-GameScreen::GameScreen(signed int PlayerCount, QWidget *parent)
-      : QWidget(parent), ui(new Ui::GameScreen), m_tickTimer(new QTimer), m_globalTimer(new QElapsedTimer) {
+GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
+                       QWidget *parent)
+      : QWidget(parent), ui(new Ui::GameScreen), m_tickTimer(new QTimer),
+        m_globalTimer(new QElapsedTimer)
+{
       ui->setupUi(this);
+
+      const QString contentPath =
+            GamepackPath.isEmpty()
+                  ? QStringLiteral("content.xml")
+                  : QDir(GamepackPath).filePath(QStringLiteral("content.xml"));
+      QString parseError;
+      if (!parseGameContent(contentPath, &m_game, &parseError))
+      {
+            qDebug() << "Failed to parse game content:" << parseError;
+      }
+      else
+      {
+            qDebug() << "Loaded game:" << m_game.name
+                     << "rounds:" << m_game.rounds.size();
+            printGameContent(m_game);
+      }
       ui->splitter->setStretchFactor(0, 2);
       ui->splitter->setStretchFactor(1, 5);
       ui->splitter->setChildrenCollapsible(false);
@@ -14,17 +35,20 @@ GameScreen::GameScreen(signed int PlayerCount, QWidget *parent)
       ui->PlayersLayout->setAlignment(Qt::AlignHCenter);
       QImage Image("Images/default.jpg");
       QPixmap pix = QPixmap::fromImage(Image);
-      ui->crupie_photo->setPixmap(pix.scaled(200, 200, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+      ui->crupie_photo->setPixmap(pix.scaled(200, 200, Qt::KeepAspectRatio,
+                                             Qt::SmoothTransformation));
       ui->tableWidget->setColumnCount(4);
       ui->tableWidget->setRowCount(4);
-      ui->tableWidget->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-      ui->tableWidget->verticalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+      ui->tableWidget->horizontalHeader()->setSectionResizeMode(
+            QHeaderView::Stretch);
+      ui->tableWidget->verticalHeader()->setSectionResizeMode(
+            QHeaderView::Stretch);
       for (uint Row{0}; Row < 4; ++Row)
       {
             for (uint Column{0}; Column < 4; ++Column)
             {
                   QPushButton *Button = new QPushButton;
-                  Button->setText(QString::number((Column+1)*100));
+                  Button->setText(QString::number((Column + 1) * 100));
                   ui->tableWidget->setCellWidget(Row, Column, Button);
             }
       }
@@ -41,9 +65,11 @@ GameScreen::GameScreen(signed int PlayerCount, QWidget *parent)
 
             QLabel *playerPfp = new QLabel;
 
-            playerPfp->setPixmap(pix.scaled(200, 200, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            playerPfp->setPixmap(pix.scaled(200, 200, Qt::KeepAspectRatio,
+                                            Qt::SmoothTransformation));
             playerPfp->setScaledContents(1);
-            QLabel *playerName = new QLabel("Player " + QString::number(Index + 1));
+            QLabel *playerName =
+                  new QLabel("Player " + QString::number(Index + 1));
             playerLayout->addWidget(playerPfp);
             playerLayout->addWidget(playerName);
             playerLayout->setStretch(0, 0);
@@ -58,14 +84,20 @@ void GameScreen::StartTimer()
 {
       m_globalTimer->start();
       m_tickTimer->start(250);
-      connect(m_tickTimer, &QTimer::timeout, this, [this](){
-            signed int value = (m_globalTimeValue - m_globalTimer->elapsed()); // / m_globalTimeValue * 100
-            if (value <= 0)
+      connect(
+            m_tickTimer, &QTimer::timeout, this,
+            [this]()
             {
-                  m_tickTimer->stop();
-                  ui->progressBar->setValue(0);
-                  qDebug() << "Timer ran out";
-            }
-            ui->progressBar->setValue(int((value / float(m_globalTimeValue)) * 100));
-      });
+                  signed int value =
+                        (m_globalTimeValue -
+                         m_globalTimer->elapsed()); // / m_globalTimeValue * 100
+                  if (value <= 0)
+                  {
+                        m_tickTimer->stop();
+                        ui->progressBar->setValue(0);
+                        qDebug() << "Timer ran out";
+                  }
+                  ui->progressBar->setValue(
+                        int((value / float(m_globalTimeValue)) * 100));
+            });
 }

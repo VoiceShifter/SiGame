@@ -26,6 +26,7 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         mainwindow.h mainwindow.cpp mainwindow.ui
         singleplayerscreen.h singleplayerscreen.cpp singleplayerscreen.ui
         gamescreen.h gamescreen.cpp gamescreen.ui
+        gamecontent.h gamecontent.cpp
 
     )
 # Define target properties for Android with Qt 6 as:

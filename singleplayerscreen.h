@@ -19,12 +19,17 @@ class SinglePlayerScreen : public QWidget
 
     private slots:
       void pickPack();
+      void pickProfilePicture();
       void createGame();
     signals:
       void SingleGameStarted(int Players, const QString &GamepackPath);
 
     private:
-      void usePack(const QString &path, bool showInvalidWarning);
+      void usePack(const QString &path, bool showInvalidWarning,
+                   bool updateCache = true);
+      void useProfilePicture(const QString &path, bool showInvalidWarning,
+                             bool updateCache = true);
+      void saveCache() const;
 
       Ui::SinglePlayerScreen *ui;
       QString GamepackPath;

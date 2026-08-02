@@ -7,11 +7,13 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QTextStream>
 
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -33,48 +35,75 @@ bool isValidPack(const QString &path)
              QFileInfo(pack.filePath(QStringLiteral("Video"))).isDir();
 }
 
-QString readCachedPack()
+std::vector<QString> readCachedSettings()
 {
       std::ifstream cacheFile(packCachePath());
       std::string row;
-      if (!std::getline(cacheFile, row) || row.size() < 2 || row.front() != '"')
+      if (!std::getline(cacheFile, row))
       {
             return {};
       }
 
-      std::string path;
-      for (std::size_t index = 1; index < row.size(); ++index)
+      std::vector<QString> fields;
+      std::size_t index = 0;
+      while (index < row.size())
       {
-            if (row[index] != '"')
+            if (row[index++] != '"')
             {
-                  path += row[index];
+                  return {};
             }
-            else if (index + 1 < row.size() && row[index + 1] == '"')
+
+            std::string value;
+            while (index < row.size())
             {
-                  path += '"';
-                  ++index;
-            }
-            else
-            {
-                  return QString::fromUtf8(path.data(),
-                                           static_cast<qsizetype>(path.size()));
+                  if (row[index] != '"')
+                  {
+                        value += row[index++];
+                  }
+                  else if (index + 1 < row.size() && row[index + 1] == '"')
+                  {
+                        value += '"';
+                        index += 2;
+                  }
+                  else
+                  {
+                        ++index;
+                        fields.push_back(QString::fromUtf8(
+                              value.data(),
+                              static_cast<qsizetype>(value.size())));
+                        if (index == row.size())
+                        {
+                              return fields;
+                        }
+                        if (row[index++] != ',')
+                        {
+                              return {};
+                        }
+                        break;
+                  }
             }
       }
-      return {};
+      return fields;
 }
 
-void cachePack(const QString &path)
+std::string csvField(const QString &value)
 {
-      std::string escapedPath = path.toUtf8().toStdString();
+      std::string field = value.toUtf8().toStdString();
       std::size_t quote = 0;
-      while ((quote = escapedPath.find('"', quote)) != std::string::npos)
+      while ((quote = field.find('"', quote)) != std::string::npos)
       {
-            escapedPath.insert(quote, 1, '"');
+            field.insert(quote, 1, '"');
             quote += 2;
       }
+      return '"' + field + '"';
+}
 
+void cacheSettings(const QString &packPath, const QString &picturePath,
+                   const QString &nickname)
+{
       std::ofstream cacheFile(packCachePath(), std::ios::trunc);
-      cacheFile << '"' << escapedPath << '"' << '\n';
+      cacheFile << csvField(packPath) << ',' << csvField(picturePath) << ','
+                << csvField(nickname) << '\n';
 }
 } // namespace
 
@@ -90,13 +119,25 @@ SinglePlayerScreen::SinglePlayerScreen(QWidget *parent)
               { ui->playerCount->setText(QString::number(value)); });
       connect(ui->pickPuckButton, &QPushButton::clicked, this,
               &SinglePlayerScreen::pickPack);
+      connect(ui->pickProfilePictureButton, &QPushButton::clicked, this,
+              &SinglePlayerScreen::pickProfilePicture);
+      connect(ui->nicknameLineEdit, &QLineEdit::editingFinished, this,
+              &SinglePlayerScreen::saveCache);
       connect(ui->createButton, &QPushButton::clicked, this,
               &SinglePlayerScreen::createGame);
 
-      const QString cachedPack = readCachedPack();
-      if (!cachedPack.isEmpty())
+      const std::vector<QString> cachedSettings = readCachedSettings();
+      if (!cachedSettings.empty())
       {
-            usePack(cachedPack, false);
+            usePack(cachedSettings[0], false, false);
+      }
+      if (cachedSettings.size() > 1)
+      {
+            useProfilePicture(cachedSettings[1], false, false);
+      }
+      if (cachedSettings.size() > 2)
+      {
+            ui->nicknameLineEdit->setText(cachedSettings[2]);
       }
 }
 
@@ -113,7 +154,8 @@ void SinglePlayerScreen::pickPack()
       usePack(fileName, true);
 }
 
-void SinglePlayerScreen::usePack(const QString &path, bool showInvalidWarning)
+void SinglePlayerScreen::usePack(const QString &path, bool showInvalidWarning,
+                                 bool updateCache)
 {
       if (!isValidPack(path))
       {
@@ -130,7 +172,52 @@ void SinglePlayerScreen::usePack(const QString &path, bool showInvalidWarning)
 
       GamepackPath = QDir(path).absolutePath();
       ui->pickPuckButton->setText(GamepackPath);
-      cachePack(GamepackPath);
+      if (updateCache)
+      {
+            saveCache();
+      }
+}
+
+void SinglePlayerScreen::pickProfilePicture()
+{
+      const QString fileName = QFileDialog::getOpenFileName(
+            this, tr("Open profile picture"), "/home/username",
+            tr("Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"));
+      if (fileName.isEmpty())
+      {
+            return;
+      }
+      useProfilePicture(fileName, true);
+}
+
+void SinglePlayerScreen::useProfilePicture(const QString &path,
+                                           bool showInvalidWarning,
+                                           bool updateCache)
+{
+      const QPixmap picture(path);
+      if (picture.isNull())
+      {
+            if (showInvalidWarning)
+            {
+                  QMessageBox::warning(
+                        this, tr("Invalid profile picture"),
+                        tr("The selected file is not a valid image."));
+            }
+            return;
+      }
+
+      ProfilePicturePath = QFileInfo(path).absoluteFilePath();
+      ui->profilePicturePreview->setPixmap(picture);
+      if (updateCache)
+      {
+            saveCache();
+      }
+}
+
+void SinglePlayerScreen::saveCache() const
+{
+      cacheSettings(GamepackPath, ProfilePicturePath,
+                    ui->nicknameLineEdit->text());
 }
 
 void SinglePlayerScreen::createGame()

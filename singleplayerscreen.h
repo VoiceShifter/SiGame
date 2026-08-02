@@ -24,6 +24,8 @@ class SinglePlayerScreen : public QWidget
       void SingleGameStarted(int Players, const QString &GamepackPath);
 
     private:
+      void usePack(const QString &path, bool showInvalidWarning);
+
       Ui::SinglePlayerScreen *ui;
       QString GamepackPath;
       QString ProfilePicturePath;

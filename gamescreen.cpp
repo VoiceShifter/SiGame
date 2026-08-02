@@ -3,7 +3,10 @@
 
 #include <QDebug>
 #include <QDir>
+#include <QScreen>
 #include <QTimer>
+
+#include <algorithm>
 
 GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                        QWidget *parent)
@@ -29,20 +32,38 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       }
       ui->splitter->setStretchFactor(0, 2);
       ui->splitter->setStretchFactor(1, 5);
+      ui->splitter->widget(0)->setMaximumWidth(350);
+      ui->crupie_photo->setScaledContents(true);
+      ui->crupie_photo->setSizePolicy(QSizePolicy::Ignored,
+                                      QSizePolicy::Ignored);
+      ui->crupie_photo->setAlignment(Qt::AlignCenter);
+      ui->JudgeLayout->setStretch(2, 1);
       ui->splitter->setChildrenCollapsible(false);
       ui->splitter->handle(1)->setEnabled(false);
       ui->splitter->handle(1)->setCursor(Qt::ArrowCursor);
       ui->PlayersLayout->setAlignment(Qt::AlignHCenter);
       QImage Image("Images/default.jpg");
-      QPixmap pix = QPixmap::fromImage(Image);
-      ui->crupie_photo->setPixmap(pix.scaled(200, 200, Qt::KeepAspectRatio,
-                                             Qt::SmoothTransformation));
+      QPixmap pix                 = QPixmap::fromImage(Image);
+      const QMargins judgeMargins = ui->JudgeLayout->contentsMargins();
+      const QMargins photoMargins = ui->verticalLayout_2->contentsMargins();
+      const int maximumPhotoSide  = ui->splitter->widget(0)->maximumWidth() -
+                                   judgeMargins.left() - judgeMargins.right() -
+                                   photoMargins.left() - photoMargins.right();
+      ui->crupie_photo->setMaximumSize(maximumPhotoSide, maximumPhotoSide);
+      ui->crupie_photo->setPixmap(pix);
       ui->tableWidget->horizontalHeader()->setSectionResizeMode(
             QHeaderView::Stretch);
       ui->tableWidget->horizontalHeader()->hide();
       ui->tableWidget->verticalHeader()->setSectionResizeMode(
             QHeaderView::Stretch);
-
+      ui->tableWidget->verticalHeader()->setHighlightSections(false);
+      ui->tableWidget->setSelectionMode(QAbstractItemView::NoSelection);
+      QFont tableFont = ui->tableWidget->font();
+      tableFont.setPixelSize(
+            std::max(16, screen()->availableGeometry().height() / 45));
+      ui->tableWidget->setFont(tableFont);
+      ui->tableWidget->verticalHeader()->setFont(tableFont);
+      ui->tableWidget->clearSelection();
       if (!m_game.rounds.empty())
       {
             const Round &round = m_game.rounds.front();
@@ -67,6 +88,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                        ++column)
                   {
                         QPushButton *button = new QPushButton;
+                        button->setFont(tableFont);
                         button->setText(
                               QString::number(theme.questions[column].price));
                         ui->tableWidget->setCellWidget(static_cast<int>(row),

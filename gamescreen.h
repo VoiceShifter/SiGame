@@ -22,6 +22,7 @@ class GameScreen : public QWidget
                           int AnswerDuration          = 5,
                           int QuestionDuration        = 5,
                           int QuestionPickDuration    = 15,
+                          int AnswerWaitDuration      = 5,
                           QWidget *parent             = nullptr);
       ~GameScreen();
 
@@ -35,6 +36,7 @@ class GameScreen : public QWidget
       unsigned int m_answerDuration;
       unsigned int m_questionDuration;
       unsigned int m_questionPickDuration;
+      unsigned int m_answerWaitDuration;
       Game m_game;
 };
 

@@ -10,13 +10,16 @@
 
 GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                        int AnswerDuration, int QuestionDuration,
-                       int QuestionPickDuration, QWidget *parent)
+                       int QuestionPickDuration, int AnswerWaitDuration,
+                       QWidget *parent)
       : QWidget(parent), ui(new Ui::GameScreen), m_tickTimer(new QTimer),
         m_globalTimer(new QElapsedTimer),
         m_answerDuration(static_cast<unsigned int>(AnswerDuration) * 1000U),
         m_questionDuration(static_cast<unsigned int>(QuestionDuration) * 1000U),
         m_questionPickDuration(
-              static_cast<unsigned int>(QuestionPickDuration) * 1000U)
+              static_cast<unsigned int>(QuestionPickDuration) * 1000U),
+        m_answerWaitDuration(
+              static_cast<unsigned int>(AnswerWaitDuration) * 1000U)
 {
       ui->setupUi(this);
 

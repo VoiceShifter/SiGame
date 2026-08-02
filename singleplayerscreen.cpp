@@ -101,7 +101,7 @@ std::string csvField(const QString &value)
 void cacheSettings(const QString &packPath, const QString &picturePath,
                    const QString &nickname, int playerCount,
                    int answerDuration, int questionDuration,
-                   int questionPickDuration)
+                   int questionPickDuration, int answerWaitDuration)
 {
       std::ofstream cacheFile(packCachePath(), std::ios::trunc);
       cacheFile << csvField(packPath) << ',' << csvField(picturePath) << ','
@@ -109,7 +109,8 @@ void cacheSettings(const QString &packPath, const QString &picturePath,
                 << csvField(QString::number(playerCount)) << ','
                 << csvField(QString::number(answerDuration)) << ','
                 << csvField(QString::number(questionDuration)) << ','
-                << csvField(QString::number(questionPickDuration)) << '\n';
+                << csvField(QString::number(questionPickDuration)) << ','
+                << csvField(QString::number(answerWaitDuration)) << '\n';
 }
 } // namespace
 
@@ -162,6 +163,10 @@ SinglePlayerScreen::SinglePlayerScreen(QWidget *parent)
             ui->questionPickDurationSpinBox->setValue(
                   cachedSettings[6].toInt());
       }
+      if (cachedSettings.size() > 7)
+      {
+            ui->answerWaitDurationSpinBox->setValue(cachedSettings[7].toInt());
+      }
 
       connect(ui->horizontalSlider, &QSlider::valueChanged, this,
               [this]() { saveCache(); });
@@ -170,6 +175,8 @@ SinglePlayerScreen::SinglePlayerScreen(QWidget *parent)
       connect(ui->questionDurationSpinBox, &QSpinBox::valueChanged, this,
               [this]() { saveCache(); });
       connect(ui->questionPickDurationSpinBox, &QSpinBox::valueChanged, this,
+              [this]() { saveCache(); });
+      connect(ui->answerWaitDurationSpinBox, &QSpinBox::valueChanged, this,
               [this]() { saveCache(); });
 }
 
@@ -253,7 +260,8 @@ void SinglePlayerScreen::saveCache() const
                     ui->horizontalSlider->value(),
                     ui->answerDurationSpinBox->value(),
                     ui->questionDurationSpinBox->value(),
-                    ui->questionPickDurationSpinBox->value());
+                    ui->questionPickDurationSpinBox->value(),
+                    ui->answerWaitDurationSpinBox->value());
 }
 
 void SinglePlayerScreen::createGame()
@@ -266,5 +274,6 @@ void SinglePlayerScreen::createGame()
             ui->playerCount->text().toInt(), GamepackPath,
             ui->answerDurationSpinBox->value(),
             ui->questionDurationSpinBox->value(),
-            ui->questionPickDurationSpinBox->value());
+            ui->questionPickDurationSpinBox->value(),
+            ui->answerWaitDurationSpinBox->value());
 }

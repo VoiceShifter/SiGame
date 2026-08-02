@@ -39,12 +39,14 @@ void MainWindow::loadSingleSettings()
 
 void MainWindow::loadSingleGame(int PlayersCount, const QString &GamepackPath,
                                 int answerDuration, int questionDuration,
-                                int questionPickDuration)
+                                int questionPickDuration,
+                                int answerWaitDuration)
 {
       qDebug() << "loading single game";
       qDebug() << PlayersCount << " - players countrer";
       gameScreen = new GameScreen(PlayersCount, GamepackPath, answerDuration,
-                                  questionDuration, questionPickDuration);
+                                  questionDuration, questionPickDuration,
+                                  answerWaitDuration);
       stack->addWidget(gameScreen);
       setCentralWidget(stack);
       stack->setCurrentWidget(gameScreen);

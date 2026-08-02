@@ -294,6 +294,33 @@
         </layout>
        </item>
        <item>
+        <layout class="QHBoxLayout" name="answerWaitDurationLayout">
+         <item>
+          <widget class="QLabel" name="answerWaitDurationLabel">
+           <property name="minimumSize">
+            <size>
+             <width>200</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>Default Answer Wait Duration:</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QSpinBox" name="answerWaitDurationSpinBox">
+           <property name="minimum">
+            <number>5</number>
+           </property>
+           <property name="maximum">
+            <number>60</number>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
         <layout class="QHBoxLayout" name="questionPickDurationLayout">
          <item>
           <widget class="QLabel" name="questionPickDurationLabel">

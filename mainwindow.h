@@ -32,7 +32,7 @@ class MainWindow : public QMainWindow
       void loadSingleSettings();
       void loadSingleGame(int PlayersCount, const QString &GamepackPath,
                           int answerDuration, int questionDuration,
-                          int questionPickDuration);
+                          int questionPickDuration, int answerWaitDuration);
       void loadSettings();
       void loadMultiplayer();
       void showExitPopup();

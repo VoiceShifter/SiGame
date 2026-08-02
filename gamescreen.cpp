@@ -37,19 +37,42 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       QPixmap pix = QPixmap::fromImage(Image);
       ui->crupie_photo->setPixmap(pix.scaled(200, 200, Qt::KeepAspectRatio,
                                              Qt::SmoothTransformation));
-      ui->tableWidget->setColumnCount(4);
-      ui->tableWidget->setRowCount(4);
       ui->tableWidget->horizontalHeader()->setSectionResizeMode(
             QHeaderView::Stretch);
+      ui->tableWidget->horizontalHeader()->hide();
       ui->tableWidget->verticalHeader()->setSectionResizeMode(
             QHeaderView::Stretch);
-      for (uint Row{0}; Row < 4; ++Row)
+
+      if (!m_game.rounds.empty())
       {
-            for (uint Column{0}; Column < 4; ++Column)
+            const Round &round = m_game.rounds.front();
+            std::size_t questionCount{0};
+            for (const Theme &theme : round.themes)
             {
-                  QPushButton *Button = new QPushButton;
-                  Button->setText(QString::number((Column + 1) * 100));
-                  ui->tableWidget->setCellWidget(Row, Column, Button);
+                  questionCount =
+                        std::max(questionCount, theme.questions.size());
+            }
+
+            ui->tableWidget->setColumnCount(static_cast<int>(questionCount));
+            ui->tableWidget->setRowCount(static_cast<int>(round.themes.size()));
+
+            for (std::size_t row{0}; row < round.themes.size(); ++row)
+            {
+                  const Theme &theme = round.themes[row];
+                  ui->tableWidget->setVerticalHeaderItem(
+                        static_cast<int>(row),
+                        new QTableWidgetItem(theme.name));
+
+                  for (std::size_t column{0}; column < theme.questions.size();
+                       ++column)
+                  {
+                        QPushButton *button = new QPushButton;
+                        button->setText(
+                              QString::number(theme.questions[column].price));
+                        ui->tableWidget->setCellWidget(static_cast<int>(row),
+                                                       static_cast<int>(column),
+                                                       button);
+                  }
             }
       }
 

@@ -268,6 +268,11 @@ void printGameContent(const Game &game)
                                      .arg(questionIndex)
                                      .arg(question.price)
                             << '\n';
+                        out << QStringLiteral(
+                                     "      Question[%1].answerDuration: %2")
+                                     .arg(questionIndex)
+                                     .arg(question.answerDuration)
+                            << '\n';
                         out << QStringLiteral("      Question[%1].text: %2")
                                      .arg(questionIndex)
                                      .arg(question.text)
@@ -388,6 +393,7 @@ bool parseGameContent(const QString &contentXmlPath, Game *game,
       Theme *currentTheme       = nullptr;
       Question *currentQuestion = nullptr;
       std::vector<QString> paramStack;
+      std::vector<QString> paramTextStack;
       bool insideRightAnswers = false;
       bool insideWrongAnswers = false;
 
@@ -451,6 +457,7 @@ bool parseGameContent(const QString &contentXmlPath, Game *game,
                   {
                         paramStack.push_back(attributeValue(
                               attributes, QStringLiteral("name")));
+                        paramTextStack.push_back({});
                   }
                   else if (elementName == QStringLiteral("right"))
                   {
@@ -506,6 +513,10 @@ bool parseGameContent(const QString &contentXmlPath, Game *game,
                         }
                   }
             }
+            else if (xml.isCharacters() && !paramTextStack.empty())
+            {
+                  paramTextStack.back() += xml.text().toString();
+            }
             else if (xml.isEndElement())
             {
                   const QString elementName = xml.name().toString();
@@ -513,7 +524,23 @@ bool parseGameContent(const QString &contentXmlPath, Game *game,
                   if (elementName == QStringLiteral("param") &&
                       !paramStack.empty())
                   {
+                        if (currentQuestion != nullptr &&
+                            paramStack.back() ==
+                                  QStringLiteral("answerDuration"))
+                        {
+                              bool isDurationValid{false};
+                              const int answerDuration =
+                                    paramTextStack.back().trimmed().toInt(
+                                          &isDurationValid);
+                              if (isDurationValid && answerDuration >= 0)
+                              {
+                                    currentQuestion->answerDuration =
+                                          static_cast<std::size_t>(
+                                                answerDuration);
+                              }
+                        }
                         paramStack.pop_back();
+                        paramTextStack.pop_back();
                   }
                   else if (elementName == QStringLiteral("right"))
                   {

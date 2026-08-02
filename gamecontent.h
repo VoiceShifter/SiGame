@@ -34,6 +34,7 @@ enum class MediaType
 struct Question
 {
       signed int price{};
+      std::size_t answerDuration{};
       QString text;
       MediaType mediaType{MediaType::None};
       QString mediaPath{};

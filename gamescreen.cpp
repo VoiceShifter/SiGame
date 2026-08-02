@@ -9,9 +9,14 @@
 #include <algorithm>
 
 GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
-                       QWidget *parent)
+                       int AnswerDuration, int QuestionDuration,
+                       int QuestionPickDuration, QWidget *parent)
       : QWidget(parent), ui(new Ui::GameScreen), m_tickTimer(new QTimer),
-        m_globalTimer(new QElapsedTimer)
+        m_globalTimer(new QElapsedTimer),
+        m_answerDuration(static_cast<unsigned int>(AnswerDuration) * 1000U),
+        m_questionDuration(static_cast<unsigned int>(QuestionDuration) * 1000U),
+        m_questionPickDuration(
+              static_cast<unsigned int>(QuestionPickDuration) * 1000U)
 {
       ui->setupUi(this);
 
@@ -134,8 +139,8 @@ void GameScreen::StartTimer()
             [this]()
             {
                   signed int value =
-                        (m_globalTimeValue -
-                         m_globalTimer->elapsed()); // / m_globalTimeValue * 100
+                        (m_questionPickDuration -
+                         m_globalTimer->elapsed()); // / m_questionPickDuration * 100
                   if (value <= 0)
                   {
                         m_tickTimer->stop();
@@ -143,6 +148,6 @@ void GameScreen::StartTimer()
                         qDebug() << "Timer ran out";
                   }
                   ui->progressBar->setValue(
-                        int((value / float(m_globalTimeValue)) * 100));
+                        int((value / float(m_questionPickDuration)) * 100));
             });
 }

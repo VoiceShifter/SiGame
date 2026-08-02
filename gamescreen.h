@@ -19,6 +19,9 @@ class GameScreen : public QWidget
     public:
       explicit GameScreen(signed int PlayerCount      = 1,
                           const QString &GamepackPath = QString(),
+                          int AnswerDuration          = 5,
+                          int QuestionDuration        = 5,
+                          int QuestionPickDuration    = 15,
                           QWidget *parent             = nullptr);
       ~GameScreen();
 
@@ -29,7 +32,9 @@ class GameScreen : public QWidget
       Ui::GameScreen *ui;
       QTimer *m_tickTimer;
       QElapsedTimer *m_globalTimer;
-      unsigned int m_globalTimeValue{15000};
+      unsigned int m_answerDuration;
+      unsigned int m_questionDuration;
+      unsigned int m_questionPickDuration;
       Game m_game;
 };
 

@@ -30,7 +30,9 @@ class MainWindow : public QMainWindow
 
     private slots:
       void loadSingleSettings();
-      void loadSingleGame(int PlayersCount, const QString &GamepackPath);
+      void loadSingleGame(int PlayersCount, const QString &GamepackPath,
+                          int answerDuration, int questionDuration,
+                          int questionPickDuration);
       void loadSettings();
       void loadMultiplayer();
       void showExitPopup();

@@ -22,7 +22,9 @@ class SinglePlayerScreen : public QWidget
       void pickProfilePicture();
       void createGame();
     signals:
-      void SingleGameStarted(int Players, const QString &GamepackPath);
+      void SingleGameStarted(int Players, const QString &GamepackPath,
+                             int answerDuration, int questionDuration,
+                             int questionPickDuration);
 
     private:
       void usePack(const QString &path, bool showInvalidWarning,

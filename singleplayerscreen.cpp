@@ -99,11 +99,15 @@ std::string csvField(const QString &value)
 }
 
 void cacheSettings(const QString &packPath, const QString &picturePath,
-                   const QString &nickname)
+                   const QString &nickname, int playerCount,
+                   int answerDuration, int questionDuration)
 {
       std::ofstream cacheFile(packCachePath(), std::ios::trunc);
       cacheFile << csvField(packPath) << ',' << csvField(picturePath) << ','
-                << csvField(nickname) << '\n';
+                << csvField(nickname) << ','
+                << csvField(QString::number(playerCount)) << ','
+                << csvField(QString::number(answerDuration)) << ','
+                << csvField(QString::number(questionDuration)) << '\n';
 }
 } // namespace
 
@@ -139,6 +143,25 @@ SinglePlayerScreen::SinglePlayerScreen(QWidget *parent)
       {
             ui->nicknameLineEdit->setText(cachedSettings[2]);
       }
+      if (cachedSettings.size() > 3)
+      {
+            ui->horizontalSlider->setValue(cachedSettings[3].toInt());
+      }
+      if (cachedSettings.size() > 4)
+      {
+            ui->answerDurationSpinBox->setValue(cachedSettings[4].toInt());
+      }
+      if (cachedSettings.size() > 5)
+      {
+            ui->questionDurationSpinBox->setValue(cachedSettings[5].toInt());
+      }
+
+      connect(ui->horizontalSlider, &QSlider::valueChanged, this,
+              [this]() { saveCache(); });
+      connect(ui->answerDurationSpinBox, &QSpinBox::valueChanged, this,
+              [this]() { saveCache(); });
+      connect(ui->questionDurationSpinBox, &QSpinBox::valueChanged, this,
+              [this]() { saveCache(); });
 }
 
 SinglePlayerScreen::~SinglePlayerScreen() { delete ui; }
@@ -217,7 +240,10 @@ void SinglePlayerScreen::useProfilePicture(const QString &path,
 void SinglePlayerScreen::saveCache() const
 {
       cacheSettings(GamepackPath, ProfilePicturePath,
-                    ui->nicknameLineEdit->text());
+                    ui->nicknameLineEdit->text(),
+                    ui->horizontalSlider->value(),
+                    ui->answerDurationSpinBox->value(),
+                    ui->questionDurationSpinBox->value());
 }
 
 void SinglePlayerScreen::createGame()

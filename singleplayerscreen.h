@@ -24,7 +24,8 @@ class SinglePlayerScreen : public QWidget
     signals:
       void SingleGameStarted(int Players, const QString &GamepackPath,
                              const QString &ProfilePicturePath,
-                             int answerDuration, int questionDuration,
+                             const QString &Nickname, int answerDuration,
+                             int questionDuration,
                              int questionPickDuration,
                              int answerWaitDuration);
 

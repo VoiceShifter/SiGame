@@ -26,6 +26,7 @@ class GameScreen : public QWidget
             signed int PlayerCount                    = 1,
             const QString &GamepackPath               = QString(),
             const QString &ProfilePicturePath         = QString(),
+            const QString &Nickname                   = QString(),
             int AnswerDuration                        = 5,
             int QuestionDuration                      = 5,
             int QuestionPickDuration                  = 15,

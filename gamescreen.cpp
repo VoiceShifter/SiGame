@@ -15,7 +15,8 @@
 #include <vector>
 
 GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
-                       const QString &ProfilePicturePath, int AnswerDuration,
+                       const QString &ProfilePicturePath,
+                       const QString &Nickname, int AnswerDuration,
                        int QuestionDuration,
                        int QuestionPickDuration, int AnswerWaitDuration,
                        QWidget *parent)
@@ -205,8 +206,11 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                   playerPixmap.scaled(200, 200, Qt::KeepAspectRatio,
                                       Qt::SmoothTransformation));
             playerPfp->setScaledContents(1);
-            QLabel *playerName =
-                  new QLabel(tr("Player %1").arg(Index + 1));
+            const QString playerDisplayName =
+                  Index == 0 && !Nickname.isEmpty()
+                        ? Nickname
+                        : tr("Player %1").arg(Index + 1);
+            QLabel *playerName = new QLabel(playerDisplayName);
             playerLayout->addWidget(playerPfp);
             playerLayout->addWidget(playerName);
             playerLayout->setStretch(0, 0);

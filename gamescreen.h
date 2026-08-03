@@ -5,9 +5,14 @@
 
 #include <QElapsedTimer>
 #include <QPixmap>
+#include <QPointer>
 #include <QTimer>
 #include <QWidget>
 
+#include <vector>
+
+class QInputDialog;
+class QLabel;
 class QResizeEvent;
 
 class QPropertyAnimation;
@@ -36,6 +41,7 @@ class GameScreen : public QWidget
 
     signals:
       void questionSelected(int themeIndex, int questionIndex);
+      void incorrectAnswerSubmitted(int playerIndex, const QString &answer);
 
     protected:
       void resizeEvent(QResizeEvent *event) override;
@@ -53,7 +59,16 @@ class GameScreen : public QWidget
             ShowingAnswer
       };
 
+      struct Player
+      {
+            QString name;
+            int balance{};
+            bool hasPassed{};
+            QLabel *balanceLabel{};
+      };
+
       void startPhaseTimer(GamePhase phase, unsigned int durationMs);
+      void setProgressBarColor(GamePhase phase);
       void updateTimerProgress();
       void handlePhaseTimeout();
       void showAnswer();
@@ -64,6 +79,11 @@ class GameScreen : public QWidget
       void fitDisplayedPixmap();
       void startReactionFlash();
       void stopReactionFlash();
+      void openAnswerDialog();
+      void handleSubmittedAnswer(const QString &answer);
+      void handleAnswerDeclined();
+      void applyIncorrectAnswerPenalty();
+      void updateBalanceLabel(Player &player);
 
       static constexpr unsigned int AnswerRevealDuration{5000U};
 
@@ -78,10 +98,13 @@ class GameScreen : public QWidget
       unsigned int m_answerWaitDuration;
       QString m_gamepackPath;
       Game m_game;
+      std::vector<Player> m_players;
+      QPointer<QInputDialog> m_answerDialog;
       GamePhase m_phase{GamePhase::PickingQuestion};
       int m_currentThemeIndex{-1};
       int m_currentQuestionIndex{-1};
       unsigned int m_phaseDuration{};
+      bool m_answerResultApplied{};
       QPixmap m_displayedPixmap;
       QString m_questionFrameStyleSheet;
       int m_flashStep{};

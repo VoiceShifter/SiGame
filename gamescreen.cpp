@@ -2,7 +2,9 @@
 #include "ui_gamescreen.h"
 
 #include <QDebug>
+#include <QDialog>
 #include <QDir>
+#include <QInputDialog>
 #include <QPropertyAnimation>
 #include <QRandomGenerator>
 #include <QResizeEvent>
@@ -67,6 +69,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                     }
 
                     ui->AnswerBytton->setEnabled(false);
+                    ui->passButton->setEnabled(false);
                     stopReactionFlash();
                     const Question &question =
                           m_game.rounds.front()
@@ -74,6 +77,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                                       m_currentThemeIndex)]
                                 .questions[static_cast<std::size_t>(
                                       m_currentQuestionIndex)];
+                    m_answerResultApplied = false;
                     const unsigned int duration =
                           question.answerDuration > 0
                                 ? static_cast<unsigned int>(
@@ -81,6 +85,25 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                                         1000U
                                 : m_answerDuration;
                     startPhaseTimer(GamePhase::Answering, duration);
+                    openAnswerDialog();
+              });
+      connect(ui->passButton, &QPushButton::clicked, this,
+              [this]()
+              {
+                    if (m_players.empty() || m_currentThemeIndex < 0)
+                    {
+                          return;
+                    }
+                    m_players.front().hasPassed = true;
+                    ui->passButton->setEnabled(false);
+                    const bool allPlayersPassed = std::all_of(
+                          m_players.cbegin(), m_players.cend(),
+                          [](const Player &player)
+                          { return player.hasPassed; });
+                    if (allPlayersPassed)
+                    {
+                          showAnswer();
+                    }
               });
 
       m_questionFrameStyleSheet = ui->questionFrame->styleSheet();
@@ -210,14 +233,20 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                   Index == 0 && !Nickname.isEmpty()
                         ? Nickname
                         : tr("Player %1").arg(Index + 1);
-            QLabel *playerName = new QLabel(playerDisplayName);
+            QLabel *playerName    = new QLabel(playerDisplayName);
+            QLabel *balanceLabel  = new QLabel;
             playerLayout->addWidget(playerPfp);
             playerLayout->addWidget(playerName);
+            playerLayout->addWidget(balanceLabel);
             playerLayout->setStretch(0, 0);
             ui->PlayersLayout->addLayout(playerLayout);
+            m_players.push_back(
+                  {playerDisplayName, 0, false, balanceLabel});
+            updateBalanceLabel(m_players.back());
       }
 
       ui->questionMediaLabel->hide();
+      ui->passButton->setEnabled(false);
       returnToBoard();
 }
 
@@ -241,6 +270,7 @@ void GameScreen::startPhaseTimer(GamePhase phase, unsigned int durationMs)
       }
       m_phase         = phase;
       m_phaseDuration = durationMs;
+      setProgressBarColor(phase);
       m_globalTimer->restart();
       m_progressAnimation->stop();
       m_progressAnimation->setStartValue(ui->progressBar->maximum());
@@ -248,6 +278,30 @@ void GameScreen::startPhaseTimer(GamePhase phase, unsigned int durationMs)
       m_progressAnimation->setDuration(static_cast<int>(durationMs));
       m_progressAnimation->start();
       m_tickTimer->start(250);
+}
+
+void GameScreen::setProgressBarColor(GamePhase phase)
+{
+      QString color;
+      switch (phase)
+      {
+      case GamePhase::PickingQuestion:
+            color = QStringLiteral("#9c27b0");
+            break;
+      case GamePhase::ReadingQuestion:
+            color = QStringLiteral("#2196f3");
+            break;
+      case GamePhase::WaitingForReaction:
+            color = QStringLiteral("#ffeb3b");
+            break;
+      case GamePhase::Answering:
+      case GamePhase::ShowingAnswer:
+            color = QStringLiteral("#f44336");
+            break;
+      }
+      ui->progressBar->setStyleSheet(
+            QStringLiteral("QProgressBar::chunk { background-color: %1; }")
+                  .arg(color));
 }
 
 void GameScreen::updateTimerProgress()
@@ -320,7 +374,12 @@ void GameScreen::showQuestion(int themeIndex, int questionIndex)
       const Question &question =
             theme.questions[static_cast<std::size_t>(questionIndex)];
       displayContent(question.text, question.mediaType, question.mediaPath);
+      for (Player &player : m_players)
+      {
+            player.hasPassed = false;
+      }
       ui->AnswerBytton->setEnabled(false);
+      ui->passButton->setEnabled(!m_players.empty());
       ui->gameContentStack->setCurrentWidget(ui->questionPage);
       QTimer::singleShot(0, this, &GameScreen::fitDisplayedPixmap);
       startPhaseTimer(GamePhase::ReadingQuestion, m_questionDuration);
@@ -329,6 +388,11 @@ void GameScreen::showQuestion(int themeIndex, int questionIndex)
 void GameScreen::showAnswer()
 {
       ui->AnswerBytton->setEnabled(false);
+      ui->passButton->setEnabled(false);
+      if (m_answerDialog != nullptr && m_answerDialog->isVisible())
+      {
+            m_answerDialog->reject();
+      }
       stopReactionFlash();
       const Question &question =
             m_game.rounds.front()
@@ -348,6 +412,11 @@ void GameScreen::returnToBoard()
 {
       stopReactionFlash();
       ui->AnswerBytton->setEnabled(false);
+      ui->passButton->setEnabled(false);
+      if (m_answerDialog != nullptr && m_answerDialog->isVisible())
+      {
+            m_answerDialog->reject();
+      }
       ui->questionTextLabel->clear();
       ui->questionMediaLabel->clear();
       ui->questionMediaLabel->hide();
@@ -474,4 +543,83 @@ void GameScreen::stopReactionFlash()
       m_flashTimer->stop();
       m_flashStep = 0;
       ui->questionFrame->setStyleSheet(m_questionFrameStyleSheet);
+}
+
+void GameScreen::openAnswerDialog()
+{
+      if (m_answerDialog != nullptr)
+      {
+            m_answerDialog->reject();
+      }
+
+      m_answerDialog = new QInputDialog(this);
+      m_answerDialog->setAttribute(Qt::WA_DeleteOnClose);
+      m_answerDialog->setInputMode(QInputDialog::TextInput);
+      m_answerDialog->setWindowTitle(tr("Answer question"));
+      m_answerDialog->setLabelText(tr("Enter your answer:"));
+      connect(m_answerDialog, &QInputDialog::textValueSelected, this,
+              &GameScreen::handleSubmittedAnswer);
+      connect(m_answerDialog, &QDialog::rejected, this,
+              &GameScreen::handleAnswerDeclined);
+      m_answerDialog->open();
+}
+
+void GameScreen::handleSubmittedAnswer(const QString &answer)
+{
+      if (m_phase != GamePhase::Answering || m_players.empty())
+      {
+            return;
+      }
+
+      const Question &question =
+            m_game.rounds.front()
+                  .themes[static_cast<std::size_t>(m_currentThemeIndex)]
+                  .questions[static_cast<std::size_t>(m_currentQuestionIndex)];
+      const QString normalizedAnswer = answer.trimmed();
+      const bool isCorrect = std::any_of(
+            question.rightAnswers.cbegin(), question.rightAnswers.cend(),
+            [&normalizedAnswer](const QString &rightAnswer)
+            {
+                  return normalizedAnswer.compare(rightAnswer.trimmed(),
+                                                  Qt::CaseInsensitive) == 0;
+            });
+
+      Player &player = m_players.front();
+      if (isCorrect)
+      {
+            player.balance += question.price;
+            m_answerResultApplied = true;
+            updateBalanceLabel(player);
+            m_answerDialog = nullptr;
+            showAnswer();
+            return;
+      }
+
+      applyIncorrectAnswerPenalty();
+      emit incorrectAnswerSubmitted(0, answer);
+}
+
+void GameScreen::handleAnswerDeclined()
+{
+      if (m_phase == GamePhase::Answering && !m_answerResultApplied)
+      {
+            applyIncorrectAnswerPenalty();
+      }
+}
+
+void GameScreen::applyIncorrectAnswerPenalty()
+{
+      const Question &question =
+            m_game.rounds.front()
+                  .themes[static_cast<std::size_t>(m_currentThemeIndex)]
+                  .questions[static_cast<std::size_t>(m_currentQuestionIndex)];
+      Player &player = m_players.front();
+      player.balance -= question.price;
+      m_answerResultApplied = true;
+      updateBalanceLabel(player);
+}
+
+void GameScreen::updateBalanceLabel(Player &player)
+{
+      player.balanceLabel->setText(tr("Balance: %1").arg(player.balance));
 }

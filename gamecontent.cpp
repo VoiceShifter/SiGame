@@ -525,6 +525,7 @@ bool parseGameContent(const QString &contentXmlPath, Game *game,
                       !paramStack.empty())
                   {
                         if (currentQuestion != nullptr &&
+                            paramStack.size() == 1 &&
                             paramStack.back() ==
                                   QStringLiteral("answerDuration"))
                         {

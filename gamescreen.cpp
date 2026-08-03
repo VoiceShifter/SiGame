@@ -3,17 +3,22 @@
 
 #include <QDebug>
 #include <QDir>
+#include <QRandomGenerator>
+#include <QResizeEvent>
 #include <QScreen>
+#include <QStringList>
 #include <QTimer>
 
 #include <algorithm>
+#include <utility>
+#include <vector>
 
 GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                        int AnswerDuration, int QuestionDuration,
                        int QuestionPickDuration, int AnswerWaitDuration,
                        QWidget *parent)
-      : QWidget(parent), ui(new Ui::GameScreen), m_tickTimer(new QTimer),
-        m_globalTimer(new QElapsedTimer),
+      : QWidget(parent), ui(new Ui::GameScreen), m_tickTimer(new QTimer(this)),
+        m_globalTimer(new QElapsedTimer), m_flashTimer(new QTimer(this)),
         m_answerDuration(static_cast<unsigned int>(AnswerDuration) * 1000U),
         m_questionDuration(static_cast<unsigned int>(QuestionDuration) * 1000U),
         m_questionPickDuration(
@@ -23,10 +28,11 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
 {
       ui->setupUi(this);
 
+      m_gamepackPath = GamepackPath.isEmpty()
+                              ? QDir::currentPath()
+                              : QDir(GamepackPath).absolutePath();
       const QString contentPath =
-            GamepackPath.isEmpty()
-                  ? QStringLiteral("content.xml")
-                  : QDir(GamepackPath).filePath(QStringLiteral("content.xml"));
+            QDir(m_gamepackPath).filePath(QStringLiteral("content.xml"));
       QString parseError;
       if (!parseGameContent(contentPath, &m_game, &parseError))
       {
@@ -38,6 +44,54 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                      << "rounds:" << m_game.rounds.size();
             printGameContent(m_game);
       }
+
+      connect(m_tickTimer, &QTimer::timeout, this,
+              &GameScreen::updateTimerProgress);
+      connect(this, &GameScreen::questionSelected, this,
+              &GameScreen::showQuestion);
+      connect(ui->pushButton, &QPushButton::clicked, this,
+              [this]()
+              {
+                    if (m_phase != GamePhase::WaitingForReaction)
+                    {
+                          return;
+                    }
+
+                    ui->pushButton->setEnabled(false);
+                    stopReactionFlash();
+                    const Question &question =
+                          m_game.rounds.front()
+                                .themes[static_cast<std::size_t>(
+                                      m_currentThemeIndex)]
+                                .questions[static_cast<std::size_t>(
+                                      m_currentQuestionIndex)];
+                    const unsigned int duration =
+                          question.answerDuration > 0
+                                ? static_cast<unsigned int>(
+                                        question.answerDuration) *
+                                        1000U
+                                : m_answerDuration;
+                    startPhaseTimer(GamePhase::Answering, duration);
+              });
+
+      m_questionFrameStyleSheet = ui->questionFrame->styleSheet();
+      connect(m_flashTimer, &QTimer::timeout, this,
+              [this]()
+              {
+                    ++m_flashStep;
+                    if (m_flashStep >= 6)
+                    {
+                          stopReactionFlash();
+                          return;
+                    }
+                    ui->questionFrame->setStyleSheet(
+                          m_flashStep % 2 == 0
+                                ? QStringLiteral(
+                                        "QFrame#questionFrame { border: 5px "
+                                        "solid yellow; }")
+                                : m_questionFrameStyleSheet);
+              });
+
       ui->splitter->setStretchFactor(0, 2);
       ui->splitter->setStretchFactor(1, 5);
       ui->splitter->widget(0)->setMaximumWidth(350);
@@ -99,9 +153,16 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                         button->setFont(tableFont);
                         button->setText(
                               QString::number(theme.questions[column].price));
-                        ui->tableWidget->setCellWidget(static_cast<int>(row),
-                                                       static_cast<int>(column),
-                                                       button);
+                        const int themeIndex    = static_cast<int>(row);
+                        const int questionIndex = static_cast<int>(column);
+                        connect(button, &QPushButton::clicked, this,
+                                [this, themeIndex, questionIndex]()
+                                {
+                                      emit questionSelected(themeIndex,
+                                                            questionIndex);
+                                });
+                        ui->tableWidget->setCellWidget(themeIndex,
+                                                       questionIndex, button);
                   }
             }
       }
@@ -122,35 +183,265 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                                             Qt::SmoothTransformation));
             playerPfp->setScaledContents(1);
             QLabel *playerName =
-                  new QLabel("Player " + QString::number(Index + 1));
+                  new QLabel(tr("Player %1").arg(Index + 1));
             playerLayout->addWidget(playerPfp);
             playerLayout->addWidget(playerName);
             playerLayout->setStretch(0, 0);
             ui->PlayersLayout->addLayout(playerLayout);
       }
-      StartTimer();
+
+      ui->questionMediaLabel->hide();
+      returnToBoard();
 }
 
-GameScreen::~GameScreen() { delete ui; }
-
-void GameScreen::StartTimer()
+GameScreen::~GameScreen()
 {
-      m_globalTimer->start();
+      delete m_globalTimer;
+      delete ui;
+}
+
+void GameScreen::resizeEvent(QResizeEvent *event)
+{
+      QWidget::resizeEvent(event);
+      fitDisplayedPixmap();
+}
+
+void GameScreen::startPhaseTimer(GamePhase phase, unsigned int durationMs)
+{
+      if (phase != GamePhase::WaitingForReaction)
+      {
+            stopReactionFlash();
+      }
+      m_phase         = phase;
+      m_phaseDuration = durationMs;
+      m_globalTimer->restart();
+      ui->progressBar->setValue(100);
       m_tickTimer->start(250);
-      connect(
-            m_tickTimer, &QTimer::timeout, this,
-            [this]()
+}
+
+void GameScreen::updateTimerProgress()
+{
+      const qint64 remaining = std::max<qint64>(
+            0, static_cast<qint64>(m_phaseDuration) -
+                     m_globalTimer->elapsed());
+      ui->progressBar->setValue(static_cast<int>(
+            remaining * 100 / static_cast<qint64>(m_phaseDuration)));
+      if (remaining == 0)
+      {
+            m_tickTimer->stop();
+            ui->progressBar->setValue(0);
+            handlePhaseTimeout();
+      }
+}
+
+void GameScreen::handlePhaseTimeout()
+{
+      switch (m_phase)
+      {
+      case GamePhase::PickingQuestion:
+            pickRandomQuestion();
+            break;
+      case GamePhase::ReadingQuestion:
+            startReactionFlash();
+            ui->pushButton->setEnabled(true);
+            startPhaseTimer(GamePhase::WaitingForReaction,
+                            m_answerWaitDuration);
+            break;
+      case GamePhase::WaitingForReaction:
+      case GamePhase::Answering:
+            showAnswer();
+            break;
+      case GamePhase::ShowingAnswer:
+            returnToBoard();
+            break;
+      }
+}
+
+void GameScreen::showQuestion(int themeIndex, int questionIndex)
+{
+      if (m_phase != GamePhase::PickingQuestion || m_game.rounds.empty() ||
+          themeIndex < 0 || questionIndex < 0)
+      {
+            return;
+      }
+
+      const Round &round = m_game.rounds.front();
+      if (static_cast<std::size_t>(themeIndex) >= round.themes.size())
+      {
+            return;
+      }
+      const Theme &theme = round.themes[static_cast<std::size_t>(themeIndex)];
+      if (static_cast<std::size_t>(questionIndex) >= theme.questions.size())
+      {
+            return;
+      }
+
+      QPushButton *button = qobject_cast<QPushButton *>(
+            ui->tableWidget->cellWidget(themeIndex, questionIndex));
+      if (button == nullptr || !button->isEnabled())
+      {
+            return;
+      }
+
+      button->setText(QString());
+      button->setEnabled(false);
+      m_currentThemeIndex    = themeIndex;
+      m_currentQuestionIndex = questionIndex;
+      const Question &question =
+            theme.questions[static_cast<std::size_t>(questionIndex)];
+      displayContent(question.text, question.mediaType, question.mediaPath);
+      ui->pushButton->setEnabled(false);
+      ui->gameContentStack->setCurrentWidget(ui->questionPage);
+      QTimer::singleShot(0, this, &GameScreen::fitDisplayedPixmap);
+      startPhaseTimer(GamePhase::ReadingQuestion, m_questionDuration);
+}
+
+void GameScreen::showAnswer()
+{
+      ui->pushButton->setEnabled(false);
+      stopReactionFlash();
+      const Question &question =
+            m_game.rounds.front()
+                  .themes[static_cast<std::size_t>(m_currentThemeIndex)]
+                  .questions[static_cast<std::size_t>(m_currentQuestionIndex)];
+      QStringList answers;
+      for (const QString &answer : question.rightAnswers)
+      {
+            answers.push_back(answer);
+      }
+      displayContent(answers.join(QLatin1Char('\n')),
+                     question.answerMediaType, question.answerMediaPath);
+      startPhaseTimer(GamePhase::ShowingAnswer, AnswerRevealDuration);
+}
+
+void GameScreen::returnToBoard()
+{
+      stopReactionFlash();
+      ui->pushButton->setEnabled(false);
+      ui->questionTextLabel->clear();
+      ui->questionMediaLabel->clear();
+      ui->questionMediaLabel->hide();
+      m_displayedPixmap = {};
+      m_currentThemeIndex = -1;
+      m_currentQuestionIndex = -1;
+      ui->gameContentStack->setCurrentWidget(ui->boardPage);
+      startPhaseTimer(GamePhase::PickingQuestion, m_questionPickDuration);
+}
+
+void GameScreen::pickRandomQuestion()
+{
+      std::vector<std::pair<int, int>> availableQuestions;
+      if (!m_game.rounds.empty())
+      {
+            const Round &round = m_game.rounds.front();
+            for (std::size_t themeIndex = 0;
+                 themeIndex < round.themes.size(); ++themeIndex)
             {
-                  signed int value =
-                        (m_questionPickDuration -
-                         m_globalTimer->elapsed()); // / m_questionPickDuration * 100
-                  if (value <= 0)
+                  for (std::size_t questionIndex = 0;
+                       questionIndex < round.themes[themeIndex].questions.size();
+                       ++questionIndex)
                   {
-                        m_tickTimer->stop();
-                        ui->progressBar->setValue(0);
-                        qDebug() << "Timer ran out";
+                        QPushButton *button = qobject_cast<QPushButton *>(
+                              ui->tableWidget->cellWidget(
+                                    static_cast<int>(themeIndex),
+                                    static_cast<int>(questionIndex)));
+                        if (button != nullptr && button->isEnabled())
+                        {
+                              availableQuestions.emplace_back(
+                                    static_cast<int>(themeIndex),
+                                    static_cast<int>(questionIndex));
+                        }
                   }
-                  ui->progressBar->setValue(
-                        int((value / float(m_questionPickDuration)) * 100));
-            });
+            }
+      }
+
+      if (availableQuestions.empty())
+      {
+            m_tickTimer->stop();
+            ui->progressBar->setValue(0);
+            ui->gameContentStack->setCurrentWidget(ui->boardPage);
+            return;
+      }
+
+      const int selectedIndex = QRandomGenerator::global()->bounded(
+            static_cast<int>(availableQuestions.size()));
+      const auto [themeIndex, questionIndex] =
+            availableQuestions[static_cast<std::size_t>(selectedIndex)];
+      emit questionSelected(themeIndex, questionIndex);
+}
+
+void GameScreen::displayContent(const QString &text, MediaType mediaType,
+                                const QString &mediaPath)
+{
+      ui->questionTextLabel->setText(text);
+      ui->questionMediaLabel->clear();
+      m_displayedPixmap = {};
+
+      if (mediaType == MediaType::Image && !mediaPath.isEmpty())
+      {
+            const QString absolutePath =
+                  QDir(m_gamepackPath).filePath(mediaPath);
+            const QPixmap image(absolutePath);
+            if (image.isNull())
+            {
+                  qWarning() << "Unable to load question image:"
+                             << absolutePath;
+            }
+            else
+            {
+                  m_displayedPixmap = image;
+            }
+      }
+
+      if (m_displayedPixmap.isNull())
+      {
+            ui->questionMediaLabel->hide();
+            ui->questionTextLabel->setSizePolicy(QSizePolicy::Expanding,
+                                                 QSizePolicy::Expanding);
+            ui->questionTextLabel->setAlignment(Qt::AlignCenter);
+      }
+      else
+      {
+            ui->questionMediaLabel->show();
+            ui->questionTextLabel->setSizePolicy(QSizePolicy::Expanding,
+                                                 QSizePolicy::Maximum);
+            ui->questionTextLabel->setAlignment(Qt::AlignHCenter |
+                                                Qt::AlignTop);
+            QTimer::singleShot(0, this, &GameScreen::fitDisplayedPixmap);
+      }
+}
+
+void GameScreen::fitDisplayedPixmap()
+{
+      if (m_displayedPixmap.isNull() ||
+          !ui->questionMediaLabel->isVisible())
+      {
+            return;
+      }
+      const QSize maximumImageSize =
+            ui->questionMediaLabel->size().boundedTo(
+                  ui->questionFrame->contentsRect().size());
+      if (maximumImageSize.isEmpty())
+      {
+            return;
+      }
+      ui->questionMediaLabel->setPixmap(
+            m_displayedPixmap.scaled(maximumImageSize, Qt::KeepAspectRatio,
+                                    Qt::SmoothTransformation));
+}
+
+void GameScreen::startReactionFlash()
+{
+      stopReactionFlash();
+      m_flashStep = 0;
+      ui->questionFrame->setStyleSheet(QStringLiteral(
+            "QFrame#questionFrame { border: 5px solid yellow; }"));
+      m_flashTimer->start(120);
+}
+
+void GameScreen::stopReactionFlash()
+{
+      m_flashTimer->stop();
+      m_flashStep = 0;
+      ui->questionFrame->setStyleSheet(m_questionFrameStyleSheet);
 }

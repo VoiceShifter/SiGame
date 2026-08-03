@@ -20,13 +20,15 @@ class GameScreen : public QWidget
       Q_OBJECT
 
     public:
-      explicit GameScreen(signed int PlayerCount      = 1,
-                          const QString &GamepackPath = QString(),
-                          int AnswerDuration          = 5,
-                          int QuestionDuration        = 5,
-                          int QuestionPickDuration    = 15,
-                          int AnswerWaitDuration      = 5,
-                          QWidget *parent             = nullptr);
+      explicit GameScreen(
+            signed int PlayerCount                    = 1,
+            const QString &GamepackPath               = QString(),
+            const QString &ProfilePicturePath         = QString(),
+            int AnswerDuration                        = 5,
+            int QuestionDuration                      = 5,
+            int QuestionPickDuration                  = 15,
+            int AnswerWaitDuration                    = 5,
+            QWidget *parent                           = nullptr);
       ~GameScreen();
 
     signals:

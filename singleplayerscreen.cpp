@@ -271,7 +271,7 @@ void SinglePlayerScreen::createGame()
             return;
       }
       emit SingleGameStarted(
-            ui->playerCount->text().toInt(), GamepackPath,
+            ui->playerCount->text().toInt(), GamepackPath, ProfilePicturePath,
             ui->answerDurationSpinBox->value(),
             ui->questionDurationSpinBox->value(),
             ui->questionPickDurationSpinBox->value(),

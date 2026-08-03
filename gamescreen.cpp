@@ -14,7 +14,8 @@
 #include <vector>
 
 GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
-                       int AnswerDuration, int QuestionDuration,
+                       const QString &ProfilePicturePath, int AnswerDuration,
+                       int QuestionDuration,
                        int QuestionPickDuration, int AnswerWaitDuration,
                        QWidget *parent)
       : QWidget(parent), ui(new Ui::GameScreen), m_tickTimer(new QTimer(this)),
@@ -170,7 +171,21 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       for (uint Index{0}; Index < PlayerCount; ++Index)
       {
             QVBoxLayout *playerLayout = new QVBoxLayout;
-            if (Image.isNull())
+            QPixmap playerPixmap = pix;
+            if (Index == 0 && !ProfilePicturePath.isEmpty())
+            {
+                  const QPixmap selectedPicture(ProfilePicturePath);
+                  if (!selectedPicture.isNull())
+                  {
+                        playerPixmap = selectedPicture;
+                  }
+                  else
+                  {
+                        qWarning() << "Unable to load profile picture:"
+                                   << ProfilePicturePath;
+                  }
+            }
+            if (playerPixmap.isNull())
             {
                   qDebug() << "Image not loaded";
                   delete playerLayout;
@@ -179,8 +194,9 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
 
             QLabel *playerPfp = new QLabel;
 
-            playerPfp->setPixmap(pix.scaled(200, 200, Qt::KeepAspectRatio,
-                                            Qt::SmoothTransformation));
+            playerPfp->setPixmap(
+                  playerPixmap.scaled(200, 200, Qt::KeepAspectRatio,
+                                      Qt::SmoothTransformation));
             playerPfp->setScaledContents(1);
             QLabel *playerName =
                   new QLabel(tr("Player %1").arg(Index + 1));

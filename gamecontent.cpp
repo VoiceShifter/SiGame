@@ -62,6 +62,23 @@ MediaType mediaTypeFromString(const QString &value)
       return MediaType::None;
 }
 
+AnswerType answerTypeFromString(const QString &value)
+{
+      if (value.isEmpty())
+      {
+            return AnswerType::Text;
+      }
+      if (value == QStringLiteral("select"))
+      {
+            return AnswerType::Select;
+      }
+      if (value == QStringLiteral("point"))
+      {
+            return AnswerType::Point;
+      }
+      return AnswerType::Unknown;
+}
+
 void appendText(QString &target, const QString &text)
 {
       if (text.isEmpty())
@@ -172,6 +189,22 @@ QString mediaTypeName(MediaType mediaType)
       return QStringLiteral("Unknown");
 }
 
+QString answerTypeName(AnswerType answerType)
+{
+      switch (answerType)
+      {
+      case AnswerType::Text:
+            return QStringLiteral("Text");
+      case AnswerType::Select:
+            return QStringLiteral("Select");
+      case AnswerType::Point:
+            return QStringLiteral("Point");
+      case AnswerType::Unknown:
+            return QStringLiteral("Unknown");
+      }
+      return QStringLiteral("Unknown");
+}
+
 QString flagName(std::size_t index)
 {
       switch (static_cast<QuestionFlag>(index))
@@ -273,6 +306,30 @@ void printGameContent(const Game &game)
                                      .arg(questionIndex)
                                      .arg(question.answerDuration)
                             << '\n';
+                        out << QStringLiteral(
+                                     "      Question[%1].answerType: %2")
+                                     .arg(questionIndex)
+                                     .arg(answerTypeName(question.answerType))
+                            << '\n';
+                        out << QStringLiteral(
+                                     "      Question[%1].answerOptions count: "
+                                     "%2")
+                                     .arg(questionIndex)
+                                     .arg(question.answerOptions.size())
+                            << '\n';
+                        for (std::size_t optionIndex = 0;
+                             optionIndex < question.answerOptions.size();
+                             ++optionIndex)
+                        {
+                              const AnswerOption &option =
+                                    question.answerOptions[optionIndex];
+                              out << QStringLiteral(
+                                           "        answerOptions[%1] %2: %3")
+                                           .arg(optionIndex)
+                                           .arg(option.id)
+                                           .arg(option.text)
+                                  << '\n';
+                        }
                         out << QStringLiteral("      Question[%1].text: %2")
                                      .arg(questionIndex)
                                      .arg(question.text)
@@ -455,8 +512,17 @@ bool parseGameContent(const QString &contentXmlPath, Game *game,
                   }
                   else if (elementName == QStringLiteral("param"))
                   {
-                        paramStack.push_back(attributeValue(
-                              attributes, QStringLiteral("name")));
+                        const QString paramName = attributeValue(
+                              attributes, QStringLiteral("name"));
+                        if (currentQuestion != nullptr &&
+                            !paramStack.empty() &&
+                            paramStack.back() ==
+                                  QStringLiteral("answerOptions"))
+                        {
+                              currentQuestion->answerOptions.push_back(
+                                    {paramName, {}});
+                        }
+                        paramStack.push_back(paramName);
                         paramTextStack.push_back({});
                   }
                   else if (elementName == QStringLiteral("right"))
@@ -511,6 +577,16 @@ bool parseGameContent(const QString &contentXmlPath, Game *game,
                         {
                               appendText(currentQuestion->text, itemText);
                         }
+                        else if (mediaType == MediaType::None &&
+                                 paramStack.size() >= 2 &&
+                                 paramStack[paramStack.size() - 2] ==
+                                       QStringLiteral("answerOptions") &&
+                                 !currentQuestion->answerOptions.empty())
+                        {
+                              appendText(
+                                    currentQuestion->answerOptions.back().text,
+                                    itemText);
+                        }
                   }
             }
             else if (xml.isCharacters() && !paramTextStack.empty())
@@ -525,19 +601,28 @@ bool parseGameContent(const QString &contentXmlPath, Game *game,
                       !paramStack.empty())
                   {
                         if (currentQuestion != nullptr &&
-                            paramStack.size() == 1 &&
-                            paramStack.back() ==
-                                  QStringLiteral("answerDuration"))
+                            paramStack.size() == 1)
                         {
-                              bool isDurationValid{false};
-                              const int answerDuration =
-                                    paramTextStack.back().trimmed().toInt(
-                                          &isDurationValid);
-                              if (isDurationValid && answerDuration >= 0)
+                              if (paramStack.back() ==
+                                  QStringLiteral("answerDuration"))
                               {
-                                    currentQuestion->answerDuration =
-                                          static_cast<std::size_t>(
-                                                answerDuration);
+                                    bool isDurationValid{false};
+                                    const int answerDuration =
+                                          paramTextStack.back().trimmed().toInt(
+                                                &isDurationValid);
+                                    if (isDurationValid && answerDuration >= 0)
+                                    {
+                                          currentQuestion->answerDuration =
+                                                static_cast<std::size_t>(
+                                                      answerDuration);
+                                    }
+                              }
+                              else if (paramStack.back() ==
+                                       QStringLiteral("answerType"))
+                              {
+                                    currentQuestion->answerType =
+                                          answerTypeFromString(
+                                                paramTextStack.back().trimmed());
                               }
                         }
                         paramStack.pop_back();

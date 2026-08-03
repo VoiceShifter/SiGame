@@ -31,10 +31,26 @@ enum class MediaType
       Video
 };
 
+enum class AnswerType
+{
+      Text,
+      Select,
+      Point,
+      Unknown
+};
+
+struct AnswerOption
+{
+      QString id;
+      QString text;
+};
+
 struct Question
 {
       signed int price{};
       std::size_t answerDuration{};
+      AnswerType answerType{AnswerType::Text};
+      std::vector<AnswerOption> answerOptions;
       QString text;
       MediaType mediaType{MediaType::None};
       QString mediaPath{};

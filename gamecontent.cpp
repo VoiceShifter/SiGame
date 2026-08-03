@@ -92,15 +92,26 @@ void appendText(QString &target, const QString &text)
       target += text;
 }
 
-void setQuestionTypeFlag(Question &question, QString Value)
+void setQuestionType(Question &question, const QString &value)
 {
-      if (Value == QStringLiteral("forAll"))
+      if (value.isEmpty())
       {
+            question.type = QuestionType::Default;
+      }
+      else if (value == QStringLiteral("forAll"))
+      {
+            question.type = QuestionType::ForAll;
             setQuestionFlag(question, QuestionFlag::ForAll);
       }
-      else if (Value == QStringLiteral("secretPublicPrice"))
+      else if (value == QStringLiteral("secretPublicPrice"))
       {
+            question.type = QuestionType::SecretPublicPrice;
+            question.secretParameters.emplace();
             setQuestionFlag(question, QuestionFlag::SecretPublicPrice);
+      }
+      else
+      {
+            question.type = QuestionType::Unknown;
       }
 }
 
@@ -205,6 +216,22 @@ QString answerTypeName(AnswerType answerType)
       return QStringLiteral("Unknown");
 }
 
+QString questionTypeName(QuestionType questionType)
+{
+      switch (questionType)
+      {
+      case QuestionType::Default:
+            return QStringLiteral("Default");
+      case QuestionType::ForAll:
+            return QStringLiteral("ForAll");
+      case QuestionType::SecretPublicPrice:
+            return QStringLiteral("SecretPublicPrice");
+      case QuestionType::Unknown:
+            return QStringLiteral("Unknown");
+      }
+      return QStringLiteral("Unknown");
+}
+
 QString flagName(std::size_t index)
 {
       switch (static_cast<QuestionFlag>(index))
@@ -301,6 +328,35 @@ void printGameContent(const Game &game)
                                      .arg(questionIndex)
                                      .arg(question.price)
                             << '\n';
+                        out << QStringLiteral("      Question[%1].type: %2")
+                                     .arg(questionIndex)
+                                     .arg(questionTypeName(question.type))
+                            << '\n';
+                        if (question.secretParameters.has_value())
+                        {
+                              const SecretQuestionParameters &secret =
+                                    *question.secretParameters;
+                              out << QStringLiteral(
+                                           "      Question[%1].secret."
+                                           "selectionMode: %2")
+                                           .arg(questionIndex)
+                                           .arg(secret.selectionMode)
+                                  << '\n';
+                              out << QStringLiteral(
+                                           "      Question[%1].secret.price: "
+                                           "%2..%3 step %4")
+                                           .arg(questionIndex)
+                                           .arg(secret.price.minimum)
+                                           .arg(secret.price.maximum)
+                                           .arg(secret.price.step)
+                                  << '\n';
+                              out << QStringLiteral(
+                                           "      Question[%1].secret.theme: "
+                                           "%2")
+                                           .arg(questionIndex)
+                                           .arg(secret.theme)
+                                  << '\n';
+                        }
                         out << QStringLiteral(
                                      "      Question[%1].answerDuration: %2")
                                      .arg(questionIndex)
@@ -310,6 +366,11 @@ void printGameContent(const Game &game)
                                      "      Question[%1].answerType: %2")
                                      .arg(questionIndex)
                                      .arg(answerTypeName(question.answerType))
+                            << '\n';
+                        out << QStringLiteral(
+                                     "      Question[%1].answerDeviation: %2")
+                                     .arg(questionIndex)
+                                     .arg(question.answerDeviation)
                             << '\n';
                         out << QStringLiteral(
                                      "      Question[%1].answerOptions count: "
@@ -505,10 +566,30 @@ bool parseGameContent(const QString &contentXmlPath, Game *game,
                                              QStringLiteral("price"))
                                     .toInt();
 
-                        setQuestionTypeFlag(
+                        setQuestionType(
                               *currentQuestion,
                               attributeValue(attributes,
                                              QStringLiteral("type")));
+                  }
+                  else if (elementName == QStringLiteral("numberSet") &&
+                           currentQuestion != nullptr &&
+                           currentQuestion->secretParameters.has_value() &&
+                           currentParamName(paramStack) ==
+                                 QStringLiteral("price"))
+                  {
+                        NumberSet &price =
+                              currentQuestion->secretParameters->price;
+                        price.minimum =
+                              attributeValue(attributes,
+                                             QStringLiteral("minimum"))
+                                    .toInt();
+                        price.maximum =
+                              attributeValue(attributes,
+                                             QStringLiteral("maximum"))
+                                    .toInt();
+                        price.step = attributeValue(
+                                           attributes, QStringLiteral("step"))
+                                           .toInt();
                   }
                   else if (elementName == QStringLiteral("param"))
                   {
@@ -623,6 +704,37 @@ bool parseGameContent(const QString &contentXmlPath, Game *game,
                                     currentQuestion->answerType =
                                           answerTypeFromString(
                                                 paramTextStack.back().trimmed());
+                              }
+                              else if (paramStack.back() ==
+                                       QStringLiteral("answerDeviation"))
+                              {
+                                    bool isDeviationValid{false};
+                                    const double answerDeviation =
+                                          paramTextStack.back()
+                                                .trimmed()
+                                                .toDouble(&isDeviationValid);
+                                    if (isDeviationValid)
+                                    {
+                                          currentQuestion->answerDeviation =
+                                                answerDeviation;
+                                    }
+                              }
+                              else if (currentQuestion->secretParameters
+                                             .has_value() &&
+                                       paramStack.back() ==
+                                             QStringLiteral("selectionMode"))
+                              {
+                                    currentQuestion->secretParameters
+                                          ->selectionMode =
+                                          paramTextStack.back().trimmed();
+                              }
+                              else if (currentQuestion->secretParameters
+                                             .has_value() &&
+                                       paramStack.back() ==
+                                             QStringLiteral("theme"))
+                              {
+                                    currentQuestion->secretParameters->theme =
+                                          paramTextStack.back().trimmed();
                               }
                         }
                         paramStack.pop_back();

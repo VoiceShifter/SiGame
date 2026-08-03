@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 const std::size_t QuestionFlagCount = 32;
@@ -39,17 +40,42 @@ enum class AnswerType
       Unknown
 };
 
+enum class QuestionType
+{
+      Default,
+      ForAll,
+      SecretPublicPrice,
+      Unknown
+};
+
 struct AnswerOption
 {
       QString id;
       QString text;
 };
 
+struct NumberSet
+{
+      signed int minimum{};
+      signed int maximum{};
+      signed int step{};
+};
+
+struct SecretQuestionParameters
+{
+      QString selectionMode;
+      NumberSet price;
+      QString theme;
+};
+
 struct Question
 {
       signed int price{};
+      QuestionType type{QuestionType::Default};
+      std::optional<SecretQuestionParameters> secretParameters;
       std::size_t answerDuration{};
       AnswerType answerType{AnswerType::Text};
+      double answerDeviation{};
       std::vector<AnswerOption> answerOptions;
       QString text;
       MediaType mediaType{MediaType::None};

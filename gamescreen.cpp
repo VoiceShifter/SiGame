@@ -58,7 +58,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
               &GameScreen::updateTimerProgress);
       connect(this, &GameScreen::questionSelected, this,
               &GameScreen::showQuestion);
-      connect(ui->pushButton, &QPushButton::clicked, this,
+      connect(ui->AnswerBytton, &QPushButton::clicked, this,
               [this]()
               {
                     if (m_phase != GamePhase::WaitingForReaction)
@@ -66,7 +66,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                           return;
                     }
 
-                    ui->pushButton->setEnabled(false);
+                    ui->AnswerBytton->setEnabled(false);
                     stopReactionFlash();
                     const Question &question =
                           m_game.rounds.front()
@@ -273,7 +273,7 @@ void GameScreen::handlePhaseTimeout()
             break;
       case GamePhase::ReadingQuestion:
             startReactionFlash();
-            ui->pushButton->setEnabled(true);
+            ui->AnswerBytton->setEnabled(true);
             startPhaseTimer(GamePhase::WaitingForReaction,
                             m_answerWaitDuration);
             break;
@@ -320,7 +320,7 @@ void GameScreen::showQuestion(int themeIndex, int questionIndex)
       const Question &question =
             theme.questions[static_cast<std::size_t>(questionIndex)];
       displayContent(question.text, question.mediaType, question.mediaPath);
-      ui->pushButton->setEnabled(false);
+      ui->AnswerBytton->setEnabled(false);
       ui->gameContentStack->setCurrentWidget(ui->questionPage);
       QTimer::singleShot(0, this, &GameScreen::fitDisplayedPixmap);
       startPhaseTimer(GamePhase::ReadingQuestion, m_questionDuration);
@@ -328,7 +328,7 @@ void GameScreen::showQuestion(int themeIndex, int questionIndex)
 
 void GameScreen::showAnswer()
 {
-      ui->pushButton->setEnabled(false);
+      ui->AnswerBytton->setEnabled(false);
       stopReactionFlash();
       const Question &question =
             m_game.rounds.front()
@@ -347,7 +347,7 @@ void GameScreen::showAnswer()
 void GameScreen::returnToBoard()
 {
       stopReactionFlash();
-      ui->pushButton->setEnabled(false);
+      ui->AnswerBytton->setEnabled(false);
       ui->questionTextLabel->clear();
       ui->questionMediaLabel->clear();
       ui->questionMediaLabel->hide();

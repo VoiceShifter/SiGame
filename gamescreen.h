@@ -10,6 +10,8 @@
 
 class QResizeEvent;
 
+class QPropertyAnimation;
+
 namespace Ui
 {
 class GameScreen;
@@ -67,6 +69,7 @@ class GameScreen : public QWidget
       Ui::GameScreen *ui;
       QTimer *m_tickTimer;
       QElapsedTimer *m_globalTimer;
+      QPropertyAnimation *m_progressAnimation;
       QTimer *m_flashTimer;
       unsigned int m_answerDuration;
       unsigned int m_questionDuration;

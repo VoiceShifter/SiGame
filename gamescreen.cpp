@@ -3,6 +3,7 @@
 
 #include <QDebug>
 #include <QDir>
+#include <QPropertyAnimation>
 #include <QRandomGenerator>
 #include <QResizeEvent>
 #include <QScreen>
@@ -19,7 +20,9 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                        int QuestionPickDuration, int AnswerWaitDuration,
                        QWidget *parent)
       : QWidget(parent), ui(new Ui::GameScreen), m_tickTimer(new QTimer(this)),
-        m_globalTimer(new QElapsedTimer), m_flashTimer(new QTimer(this)),
+        m_globalTimer(new QElapsedTimer),
+        m_progressAnimation(new QPropertyAnimation(this)),
+        m_flashTimer(new QTimer(this)),
         m_answerDuration(static_cast<unsigned int>(AnswerDuration) * 1000U),
         m_questionDuration(static_cast<unsigned int>(QuestionDuration) * 1000U),
         m_questionPickDuration(
@@ -28,6 +31,10 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
               static_cast<unsigned int>(AnswerWaitDuration) * 1000U)
 {
       ui->setupUi(this);
+      ui->progressBar->setRange(0, 1000);
+      m_progressAnimation->setTargetObject(ui->progressBar);
+      m_progressAnimation->setPropertyName("value");
+      m_progressAnimation->setEasingCurve(QEasingCurve::Linear);
 
       m_gamepackPath = GamepackPath.isEmpty()
                               ? QDir::currentPath()
@@ -231,7 +238,11 @@ void GameScreen::startPhaseTimer(GamePhase phase, unsigned int durationMs)
       m_phase         = phase;
       m_phaseDuration = durationMs;
       m_globalTimer->restart();
-      ui->progressBar->setValue(100);
+      m_progressAnimation->stop();
+      m_progressAnimation->setStartValue(ui->progressBar->maximum());
+      m_progressAnimation->setEndValue(ui->progressBar->minimum());
+      m_progressAnimation->setDuration(static_cast<int>(durationMs));
+      m_progressAnimation->start();
       m_tickTimer->start(250);
 }
 
@@ -240,12 +251,11 @@ void GameScreen::updateTimerProgress()
       const qint64 remaining = std::max<qint64>(
             0, static_cast<qint64>(m_phaseDuration) -
                      m_globalTimer->elapsed());
-      ui->progressBar->setValue(static_cast<int>(
-            remaining * 100 / static_cast<qint64>(m_phaseDuration)));
       if (remaining == 0)
       {
             m_tickTimer->stop();
-            ui->progressBar->setValue(0);
+            m_progressAnimation->stop();
+            ui->progressBar->setValue(ui->progressBar->minimum());
             handlePhaseTimeout();
       }
 }

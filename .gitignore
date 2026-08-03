@@ -99,3 +99,5 @@ CMakeLists.txt.user*
 content.xml
 AGENTS.md
 plan.md
+.qtcreator/project.json
+.qtcreator/project.json.user

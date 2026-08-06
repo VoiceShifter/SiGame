@@ -5,10 +5,13 @@
 
 #include <QElapsedTimer>
 #include <QPixmap>
+#include <QPointF>
 #include <QPointer>
+#include <QRect>
 #include <QTimer>
 #include <QWidget>
 
+#include <optional>
 #include <vector>
 
 class QInputDialog;
@@ -42,8 +45,15 @@ class GameScreen : public QWidget
     signals:
       void questionSelected(int themeIndex, int questionIndex);
       void incorrectAnswerSubmitted(int playerIndex, const QString &answer);
+      void forAllQuestionSelected(int roundIndex, int themeIndex,
+                                  int questionIndex);
+      void secretPublicPriceQuestionSelected(
+            int roundIndex, int themeIndex, int questionIndex,
+            const QString &selectionMode, int minimumPrice, int maximumPrice,
+            int priceStep, const QString &theme);
 
     protected:
+      bool eventFilter(QObject *watched, QEvent *event) override;
       void resizeEvent(QResizeEvent *event) override;
 
     private slots:
@@ -73,17 +83,28 @@ class GameScreen : public QWidget
       void handlePhaseTimeout();
       void showAnswer();
       void returnToBoard();
+      const Question &currentQuestion() const;
       void pickRandomQuestion();
       void displayContent(const QString &text, MediaType mediaType,
                           const QString &mediaPath);
       void fitDisplayedPixmap();
+      void fitAnswerOptionsTable();
       void startReactionFlash();
       void stopReactionFlash();
-      void openAnswerDialog();
+      void openAnswerInput();
+      void openTextAnswerDialog();
+      void enableSelectAnswerInput();
+      void enablePointAnswerInput();
       void handleSubmittedAnswer(const QString &answer);
       void handleAnswerDeclined();
-      void applyIncorrectAnswerPenalty();
+      void applyAnswerResult(bool isCorrect, const QString &submittedAnswer);
       void updateBalanceLabel(Player &player);
+      void populateAnswerOptions(const Question &question);
+      void clearAnswerOptions();
+      void highlightSelectAnswers(const Question &question);
+      void resetAnswerInputState();
+      bool parsePointAnswer(const QString &value, QPointF *point,
+                            double *aspectRatio) const;
 
       static constexpr unsigned int AnswerRevealDuration{5000U};
 
@@ -100,6 +121,12 @@ class GameScreen : public QWidget
       Game m_game;
       std::vector<Player> m_players;
       QPointer<QInputDialog> m_answerDialog;
+      QString m_submittedAnswer;
+      std::optional<QPointF> m_correctPoint;
+      std::optional<QPointF> m_submittedPoint;
+      double m_correctPointAspectRatio{1.0};
+      QRect m_displayedPixmapRect;
+      bool m_pointInputEnabled{};
       GamePhase m_phase{GamePhase::PickingQuestion};
       int m_currentThemeIndex{-1};
       int m_currentQuestionIndex{-1};

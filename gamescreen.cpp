@@ -1,10 +1,14 @@
 #include "gamescreen.h"
 #include "ui_gamescreen.h"
 
+#include <QColor>
 #include <QDebug>
 #include <QDialog>
 #include <QDir>
+#include <QFontMetrics>
 #include <QInputDialog>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QPropertyAnimation>
 #include <QRandomGenerator>
 #include <QResizeEvent>
@@ -13,6 +17,7 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 #include <vector>
 
@@ -38,6 +43,37 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       m_progressAnimation->setTargetObject(ui->progressBar);
       m_progressAnimation->setPropertyName("value");
       m_progressAnimation->setEasingCurve(QEasingCurve::Linear);
+      ui->answerOptionsTable->horizontalHeader()->hide();
+      ui->answerOptionsTable->verticalHeader()->hide();
+      ui->answerOptionsTable->setFocusPolicy(Qt::NoFocus);
+      ui->answerOptionsTable->setCurrentCell(-1, -1);
+      ui->answerOptionsTable->clearSelection();
+      ui->answerOptionsTable->setShowGrid(true);
+      ui->answerOptionsTable->setStyleSheet(QStringLiteral(
+            "QTableWidget { background: transparent; "
+            "border: 2px solid #6c63ff; gridline-color: #6c63ff; }"));
+      connect(ui->answerOptionsTable, &QTableWidget::cellClicked, this,
+              [this](int row, int column)
+              {
+                    if (m_phase != GamePhase::Answering ||
+                        m_answerResultApplied ||
+                        currentQuestion().answerType != AnswerType::Select)
+                    {
+                          return;
+                    }
+                    QTableWidgetItem *item =
+                          ui->answerOptionsTable->item(row, column);
+                    if (item == nullptr)
+                    {
+                          return;
+                    }
+                    ui->answerOptionsTable->viewport()->setAttribute(
+                          Qt::WA_TransparentForMouseEvents, true);
+                    ui->answerOptionsTable->setCurrentCell(-1, -1);
+                    ui->answerOptionsTable->clearSelection();
+                    handleSubmittedAnswer(
+                          item->data(Qt::UserRole).toString());
+              });
 
       m_gamepackPath = GamepackPath.isEmpty()
                               ? QDir::currentPath()
@@ -85,7 +121,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                                         1000U
                                 : m_answerDuration;
                     startPhaseTimer(GamePhase::Answering, duration);
-                    openAnswerDialog();
+                    openAnswerInput();
               });
       connect(ui->passButton, &QPushButton::clicked, this,
               [this]()
@@ -245,7 +281,11 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
             updateBalanceLabel(m_players.back());
       }
 
+      ui->questionMediaLabel->installEventFilter(this);
+      ui->answerOptionsContainer->installEventFilter(this);
       ui->questionMediaLabel->hide();
+      ui->answerOptionsTable->hide();
+      ui->answerOptionsContainer->hide();
       ui->passButton->setEnabled(false);
       returnToBoard();
 }
@@ -256,10 +296,62 @@ GameScreen::~GameScreen()
       delete ui;
 }
 
+bool GameScreen::eventFilter(QObject *watched, QEvent *event)
+{
+      if (watched == ui->answerOptionsContainer &&
+          event->type() == QEvent::Resize)
+      {
+            fitAnswerOptionsTable();
+      }
+      if (watched == ui->questionMediaLabel &&
+          event->type() == QEvent::MouseButtonPress &&
+          m_phase == GamePhase::Answering && m_pointInputEnabled &&
+          !m_displayedPixmapRect.isEmpty())
+      {
+            const auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            const QPoint clickPosition = mouseEvent->position().toPoint();
+            if (mouseEvent->button() == Qt::LeftButton &&
+                m_displayedPixmapRect.contains(clickPosition))
+            {
+                  const double x = std::clamp(
+                        (clickPosition.x() - m_displayedPixmapRect.left()) /
+                              static_cast<double>(
+                                    m_displayedPixmapRect.width()),
+                        0.0, 1.0);
+                  const double y = std::clamp(
+                        (clickPosition.y() - m_displayedPixmapRect.top()) /
+                              static_cast<double>(
+                                    m_displayedPixmapRect.height()),
+                        0.0, 1.0);
+                  m_submittedPoint = QPointF(x, y);
+                  m_pointInputEnabled = false;
+                  ui->questionMediaLabel->setCursor(Qt::ArrowCursor);
+                  fitDisplayedPixmap();
+
+                  const double dx =
+                        (x - m_correctPoint->x()) *
+                        m_correctPointAspectRatio;
+                  const double dy = y - m_correctPoint->y();
+                  const double allowedDeviation =
+                        std::max(0.02, currentQuestion().answerDeviation);
+                  const bool isCorrect =
+                        std::hypot(dx, dy) <= allowedDeviation;
+                  const QString submittedAnswer =
+                        QStringLiteral("%1,%2")
+                              .arg(x, 0, 'f', 6)
+                              .arg(y, 0, 'f', 6);
+                  applyAnswerResult(isCorrect, submittedAnswer);
+                  return true;
+            }
+      }
+      return QWidget::eventFilter(watched, event);
+}
+
 void GameScreen::resizeEvent(QResizeEvent *event)
 {
       QWidget::resizeEvent(event);
       fitDisplayedPixmap();
+      fitAnswerOptionsTable();
 }
 
 void GameScreen::startPhaseTimer(GamePhase phase, unsigned int durationMs)
@@ -367,13 +459,80 @@ void GameScreen::showQuestion(int themeIndex, int questionIndex)
             return;
       }
 
+      const Question &question =
+            theme.questions[static_cast<std::size_t>(questionIndex)];
       button->setText(QString());
       button->setEnabled(false);
       m_currentThemeIndex    = themeIndex;
       m_currentQuestionIndex = questionIndex;
-      const Question &question =
-            theme.questions[static_cast<std::size_t>(questionIndex)];
+
+      switch (question.type)
+      {
+      case QuestionType::ForAll:
+            emit forAllQuestionSelected(0, themeIndex, questionIndex);
+            break;
+      case QuestionType::SecretPublicPrice:
+            if (question.secretParameters.has_value())
+            {
+                  const SecretQuestionParameters &parameters =
+                        *question.secretParameters;
+                  emit secretPublicPriceQuestionSelected(
+                        0, themeIndex, questionIndex,
+                        parameters.selectionMode, parameters.price.minimum,
+                        parameters.price.maximum, parameters.price.step,
+                        parameters.theme);
+            }
+            else
+            {
+                  qWarning() << "Secret public price question has no metadata";
+                  emit secretPublicPriceQuestionSelected(
+                        0, themeIndex, questionIndex, QString(), 0, 0, 0,
+                        QString());
+            }
+            break;
+      case QuestionType::Default:
+            break;
+      case QuestionType::Unknown:
+            qWarning() << "Unknown question type";
+            break;
+      }
+
+      resetAnswerInputState();
       displayContent(question.text, question.mediaType, question.mediaPath);
+      if (question.answerType == AnswerType::Select)
+      {
+            if (question.answerOptions.size() >= 2)
+            {
+                  populateAnswerOptions(question);
+            }
+            else
+            {
+                  qWarning() << "Select question has fewer than two options";
+            }
+      }
+      else if (question.answerType == AnswerType::Point)
+      {
+            for (const QString &answer : question.rightAnswers)
+            {
+                  QPointF point;
+                  double aspectRatio{1.0};
+                  if (parsePointAnswer(answer, &point, &aspectRatio))
+                  {
+                        m_correctPoint = point;
+                        m_correctPointAspectRatio = aspectRatio;
+                        break;
+                  }
+            }
+            if (!m_correctPoint.has_value())
+            {
+                  qWarning() << "Point question has no coordinate answer";
+            }
+            if (question.mediaType != MediaType::Image ||
+                m_displayedPixmap.isNull())
+            {
+                  qWarning() << "Point question has no valid image";
+            }
+      }
       for (Player &player : m_players)
       {
             player.hasPassed = false;
@@ -389,20 +548,72 @@ void GameScreen::showAnswer()
 {
       ui->AnswerBytton->setEnabled(false);
       ui->passButton->setEnabled(false);
+      const Question &question = currentQuestion();
+      if (m_phase == GamePhase::Answering && !m_answerResultApplied &&
+          (question.answerType != AnswerType::Point ||
+           (m_correctPoint.has_value() && !m_displayedPixmap.isNull())))
+      {
+            applyAnswerResult(false, QString());
+      }
       if (m_answerDialog != nullptr && m_answerDialog->isVisible())
       {
             m_answerDialog->reject();
       }
+      m_pointInputEnabled = false;
+      ui->answerOptionsTable->viewport()->setAttribute(
+            Qt::WA_TransparentForMouseEvents, true);
+      ui->questionMediaLabel->setCursor(Qt::ArrowCursor);
       stopReactionFlash();
-      const Question &question =
-            m_game.rounds.front()
-                  .themes[static_cast<std::size_t>(m_currentThemeIndex)]
-                  .questions[static_cast<std::size_t>(m_currentQuestionIndex)];
+
       QStringList answers;
-      for (const QString &answer : question.rightAnswers)
+      switch (question.answerType)
       {
-            answers.push_back(answer);
+      case AnswerType::Text:
+            for (const QString &answer : question.rightAnswers)
+            {
+                  answers.push_back(answer);
+            }
+            break;
+      case AnswerType::Select:
+            for (const QString &rightAnswer : question.rightAnswers)
+            {
+                  const auto option = std::find_if(
+                        question.answerOptions.cbegin(),
+                        question.answerOptions.cend(),
+                        [&rightAnswer](const AnswerOption &candidate)
+                        {
+                              return candidate.id.compare(
+                                           rightAnswer.trimmed(),
+                                           Qt::CaseInsensitive) == 0;
+                        });
+                  answers.push_back(
+                        option == question.answerOptions.cend()
+                              ? rightAnswer
+                              : QStringLiteral("%1 — %2")
+                                      .arg(option->id, option->text));
+            }
+            highlightSelectAnswers(question);
+            break;
+      case AnswerType::Point:
+            for (const QString &answer : question.rightAnswers)
+            {
+                  QPointF point;
+                  double aspectRatio;
+                  if (!parsePointAnswer(answer, &point, &aspectRatio))
+                  {
+                        answers.push_back(answer);
+                  }
+            }
+            break;
+      case AnswerType::Unknown:
+            qWarning() << "Unknown answer type; revealing raw answers";
+            for (const QString &answer : question.rightAnswers)
+            {
+                  answers.push_back(answer);
+            }
+            break;
       }
+
       displayContent(answers.join(QLatin1Char('\n')),
                      question.answerMediaType, question.answerMediaPath);
       startPhaseTimer(GamePhase::ShowingAnswer, AnswerRevealDuration);
@@ -413,10 +624,7 @@ void GameScreen::returnToBoard()
       stopReactionFlash();
       ui->AnswerBytton->setEnabled(false);
       ui->passButton->setEnabled(false);
-      if (m_answerDialog != nullptr && m_answerDialog->isVisible())
-      {
-            m_answerDialog->reject();
-      }
+      resetAnswerInputState();
       ui->questionTextLabel->clear();
       ui->questionMediaLabel->clear();
       ui->questionMediaLabel->hide();
@@ -425,6 +633,13 @@ void GameScreen::returnToBoard()
       m_currentQuestionIndex = -1;
       ui->gameContentStack->setCurrentWidget(ui->boardPage);
       startPhaseTimer(GamePhase::PickingQuestion, m_questionPickDuration);
+}
+
+const Question &GameScreen::currentQuestion() const
+{
+      return m_game.rounds.front()
+            .themes[static_cast<std::size_t>(m_currentThemeIndex)]
+            .questions[static_cast<std::size_t>(m_currentQuestionIndex)];
 }
 
 void GameScreen::pickRandomQuestion()
@@ -475,6 +690,7 @@ void GameScreen::displayContent(const QString &text, MediaType mediaType,
       ui->questionTextLabel->setText(text);
       ui->questionMediaLabel->clear();
       m_displayedPixmap = {};
+      m_displayedPixmapRect = {};
 
       if (mediaType == MediaType::Image && !mediaPath.isEmpty())
       {
@@ -524,9 +740,98 @@ void GameScreen::fitDisplayedPixmap()
       {
             return;
       }
-      ui->questionMediaLabel->setPixmap(
+      QPixmap fittedPixmap =
             m_displayedPixmap.scaled(maximumImageSize, Qt::KeepAspectRatio,
-                                    Qt::SmoothTransformation));
+                                    Qt::SmoothTransformation);
+      m_displayedPixmapRect = QRect(
+            (ui->questionMediaLabel->width() - fittedPixmap.width()) / 2,
+            (ui->questionMediaLabel->height() - fittedPixmap.height()) / 2,
+            fittedPixmap.width(), fittedPixmap.height());
+      if (m_submittedPoint.has_value())
+      {
+            QPainter painter(&fittedPixmap);
+            painter.setRenderHint(QPainter::Antialiasing);
+            QPen markerPen(Qt::red);
+            markerPen.setWidth(3);
+            painter.setPen(markerPen);
+            const QPointF marker(
+                  m_submittedPoint->x() * fittedPixmap.width(),
+                  m_submittedPoint->y() * fittedPixmap.height());
+            const int radius =
+                  std::max(6, std::min(fittedPixmap.width(),
+                                      fittedPixmap.height()) /
+                                    50);
+            painter.drawEllipse(marker, radius, radius);
+      }
+      ui->questionMediaLabel->setPixmap(fittedPixmap);
+}
+
+void GameScreen::fitAnswerOptionsTable()
+{
+      if (!ui->answerOptionsTable->isVisible())
+      {
+            return;
+      }
+
+      const QMargins margins = ui->questionFrameLayout->contentsMargins();
+      const QSize frameSize = ui->questionFrame->contentsRect().size();
+      const int availableWidth =
+            frameSize.width() - margins.left() - margins.right();
+      const int frameHeight =
+            frameSize.height() - margins.top() - margins.bottom();
+      const QFontMetrics textMetrics(ui->questionTextLabel->font());
+      const int maximumTextHeight = std::max(
+            textMetrics.lineSpacing() * 2, frameHeight / 3);
+      const int requiredTextHeight =
+            textMetrics
+                  .boundingRect(QRect(0, 0, availableWidth,
+                                      maximumTextHeight),
+                                Qt::AlignCenter | Qt::TextWordWrap,
+                                currentQuestion().text)
+                  .height();
+      const int textHeight = std::min(
+            maximumTextHeight,
+            std::max(textMetrics.lineSpacing(), requiredTextHeight));
+      ui->questionTextLabel->setFixedHeight(textHeight);
+
+      const int columnCount = ui->answerOptionsTable->columnCount();
+      const int rowCount = ui->answerOptionsTable->rowCount();
+      const QSize containerSize =
+            ui->answerOptionsContainer->contentsRect().size();
+      if (columnCount == 0 || rowCount == 0 || containerSize.isEmpty())
+      {
+            return;
+      }
+
+      const int tableBorderExtent = 4;
+      const int tileSide = std::max(
+            1, std::min((containerSize.width() - tableBorderExtent) /
+                              columnCount,
+                        (containerSize.height() - tableBorderExtent) /
+                              rowCount));
+      ui->answerOptionsTable->horizontalHeader()->setSectionResizeMode(
+            QHeaderView::Fixed);
+      ui->answerOptionsTable->verticalHeader()->setSectionResizeMode(
+            QHeaderView::Fixed);
+      for (int column = 0; column < columnCount; ++column)
+      {
+            ui->answerOptionsTable->horizontalHeader()->resizeSection(
+                  column, tileSide);
+      }
+      for (int row = 0; row < rowCount; ++row)
+      {
+            ui->answerOptionsTable->verticalHeader()->resizeSection(row,
+                                                                    tileSide);
+      }
+
+      const QSize tableSize(tileSide * columnCount + tableBorderExtent,
+                            tileSide * rowCount + tableBorderExtent);
+      ui->answerOptionsTable->setSizeAdjustPolicy(
+            QAbstractScrollArea::AdjustIgnored);
+      ui->answerOptionsTable->setGeometry(
+            (containerSize.width() - tableSize.width()) / 2,
+            (containerSize.height() - tableSize.height()) / 2,
+            tableSize.width(), tableSize.height());
 }
 
 void GameScreen::startReactionFlash()
@@ -545,13 +850,36 @@ void GameScreen::stopReactionFlash()
       ui->questionFrame->setStyleSheet(m_questionFrameStyleSheet);
 }
 
-void GameScreen::openAnswerDialog()
+void GameScreen::openAnswerInput()
 {
-      if (m_answerDialog != nullptr)
+      switch (currentQuestion().answerType)
       {
-            m_answerDialog->reject();
+      case AnswerType::Text:
+            openTextAnswerDialog();
+            break;
+      case AnswerType::Select:
+            if (currentQuestion().answerOptions.size() >= 2)
+            {
+                  enableSelectAnswerInput();
+            }
+            else
+            {
+                  qWarning() << "Invalid select question; using text input";
+                  openTextAnswerDialog();
+            }
+            break;
+      case AnswerType::Point:
+            enablePointAnswerInput();
+            break;
+      case AnswerType::Unknown:
+            qWarning() << "Unknown answer type; using text input";
+            openTextAnswerDialog();
+            break;
       }
+}
 
+void GameScreen::openTextAnswerDialog()
+{
       m_answerDialog = new QInputDialog(this);
       m_answerDialog->setAttribute(Qt::WA_DeleteOnClose);
       m_answerDialog->setInputMode(QInputDialog::TextInput);
@@ -564,6 +892,23 @@ void GameScreen::openAnswerDialog()
       m_answerDialog->open();
 }
 
+void GameScreen::enableSelectAnswerInput()
+{
+      ui->answerOptionsTable->viewport()->setAttribute(
+            Qt::WA_TransparentForMouseEvents, false);
+}
+
+void GameScreen::enablePointAnswerInput()
+{
+      if (!m_correctPoint.has_value() || m_displayedPixmap.isNull())
+      {
+            qWarning() << "Point input cannot be enabled";
+            return;
+      }
+      m_pointInputEnabled = true;
+      ui->questionMediaLabel->setCursor(Qt::CrossCursor);
+}
+
 void GameScreen::handleSubmittedAnswer(const QString &answer)
 {
       if (m_phase != GamePhase::Answering || m_players.empty())
@@ -571,52 +916,228 @@ void GameScreen::handleSubmittedAnswer(const QString &answer)
             return;
       }
 
-      const Question &question =
-            m_game.rounds.front()
-                  .themes[static_cast<std::size_t>(m_currentThemeIndex)]
-                  .questions[static_cast<std::size_t>(m_currentQuestionIndex)];
       const QString normalizedAnswer = answer.trimmed();
       const bool isCorrect = std::any_of(
-            question.rightAnswers.cbegin(), question.rightAnswers.cend(),
+            currentQuestion().rightAnswers.cbegin(),
+            currentQuestion().rightAnswers.cend(),
             [&normalizedAnswer](const QString &rightAnswer)
             {
                   return normalizedAnswer.compare(rightAnswer.trimmed(),
                                                   Qt::CaseInsensitive) == 0;
             });
-
-      Player &player = m_players.front();
-      if (isCorrect)
+      if (currentQuestion().answerType == AnswerType::Select)
       {
-            player.balance += question.price;
-            m_answerResultApplied = true;
-            updateBalanceLabel(player);
-            m_answerDialog = nullptr;
-            showAnswer();
-            return;
+            const QColor resultColor(
+                  isCorrect ? QStringLiteral("#2e7d32")
+                            : QStringLiteral("#c62828"));
+            for (int row = 0; row < ui->answerOptionsTable->rowCount(); ++row)
+            {
+                  for (int column = 0;
+                       column < ui->answerOptionsTable->columnCount(); ++column)
+                  {
+                        QTableWidgetItem *item =
+                              ui->answerOptionsTable->item(row, column);
+                        if (item != nullptr &&
+                            item->data(Qt::UserRole)
+                                        .toString()
+                                        .compare(normalizedAnswer,
+                                                 Qt::CaseInsensitive) == 0)
+                        {
+                              item->setBackground(resultColor);
+                              item->setForeground(Qt::white);
+                              ui->answerOptionsTable->viewport()->update();
+                        }
+                  }
+            }
       }
-
-      applyIncorrectAnswerPenalty();
-      emit incorrectAnswerSubmitted(0, answer);
+      applyAnswerResult(isCorrect, answer);
 }
 
 void GameScreen::handleAnswerDeclined()
 {
       if (m_phase == GamePhase::Answering && !m_answerResultApplied)
       {
-            applyIncorrectAnswerPenalty();
+            applyAnswerResult(false, QString());
       }
 }
 
-void GameScreen::applyIncorrectAnswerPenalty()
+void GameScreen::applyAnswerResult(bool isCorrect,
+                                   const QString &submittedAnswer)
 {
-      const Question &question =
-            m_game.rounds.front()
-                  .themes[static_cast<std::size_t>(m_currentThemeIndex)]
-                  .questions[static_cast<std::size_t>(m_currentQuestionIndex)];
-      Player &player = m_players.front();
-      player.balance -= question.price;
+      if (m_answerResultApplied || m_players.empty())
+      {
+            return;
+      }
+
       m_answerResultApplied = true;
+      m_submittedAnswer = submittedAnswer;
+      Player &player = m_players.front();
+      if (isCorrect)
+      {
+            player.balance += currentQuestion().price;
+            updateBalanceLabel(player);
+            m_answerDialog = nullptr;
+            showAnswer();
+            return;
+      }
+
+      player.balance -= currentQuestion().price;
       updateBalanceLabel(player);
+      emit incorrectAnswerSubmitted(0, submittedAnswer);
+}
+
+void GameScreen::populateAnswerOptions(const Question &question)
+{
+      clearAnswerOptions();
+      const int columnCount = 2;
+      const int rowCount = static_cast<int>(
+            (question.answerOptions.size() + columnCount - 1) / columnCount);
+      ui->answerOptionsTable->setColumnCount(columnCount);
+      ui->answerOptionsTable->setRowCount(rowCount);
+      ui->answerOptionsTable->horizontalHeader()->setSectionResizeMode(
+            QHeaderView::Stretch);
+      ui->answerOptionsTable->verticalHeader()->setSectionResizeMode(
+            QHeaderView::Stretch);
+      QFont optionFont = ui->questionTextLabel->font();
+      optionFont.setPixelSize(
+            std::max(16, screen()->availableGeometry().height() / 45));
+      ui->answerOptionsTable->setFont(optionFont);
+
+      for (std::size_t index = 0; index < question.answerOptions.size();
+           ++index)
+      {
+            const AnswerOption &option = question.answerOptions[index];
+            auto *item = new QTableWidgetItem(
+                  QStringLiteral("%1\n%2").arg(option.id, option.text));
+            item->setData(Qt::UserRole, option.id);
+            item->setBackground(QColor(QStringLiteral("#2d2d3a")));
+            item->setForeground(Qt::white);
+            item->setTextAlignment(Qt::AlignCenter);
+            item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+            ui->answerOptionsTable->setItem(
+                  static_cast<int>(index) / columnCount,
+                  static_cast<int>(index) % columnCount, item);
+      }
+      ui->answerOptionsTable->setEnabled(true);
+      ui->answerOptionsTable->setCurrentCell(-1, -1);
+      ui->answerOptionsTable->clearSelection();
+      ui->answerOptionsTable->viewport()->setAttribute(
+            Qt::WA_TransparentForMouseEvents, true);
+      ui->answerOptionsContainer->show();
+      ui->answerOptionsTable->show();
+      ui->questionTextLabel->setSizePolicy(QSizePolicy::Expanding,
+                                           QSizePolicy::Maximum);
+      QTimer::singleShot(0, this, &GameScreen::fitAnswerOptionsTable);
+}
+
+void GameScreen::clearAnswerOptions()
+{
+      ui->answerOptionsTable->clear();
+      ui->answerOptionsTable->setRowCount(0);
+      ui->answerOptionsTable->setColumnCount(0);
+      ui->answerOptionsTable->viewport()->setAttribute(
+            Qt::WA_TransparentForMouseEvents, true);
+      ui->answerOptionsTable->hide();
+      ui->answerOptionsContainer->hide();
+}
+
+void GameScreen::highlightSelectAnswers(const Question &question)
+{
+      for (int row = 0; row < ui->answerOptionsTable->rowCount(); ++row)
+      {
+            for (int column = 0;
+                 column < ui->answerOptionsTable->columnCount(); ++column)
+            {
+                  QTableWidgetItem *item =
+                        ui->answerOptionsTable->item(row, column);
+                  if (item == nullptr)
+                  {
+                        continue;
+                  }
+                  const QString optionId =
+                        item->data(Qt::UserRole).toString();
+                  const bool isCorrect = std::any_of(
+                        question.rightAnswers.cbegin(),
+                        question.rightAnswers.cend(),
+                        [&optionId](const QString &rightAnswer)
+                        {
+                              return optionId.compare(
+                                           rightAnswer.trimmed(),
+                                           Qt::CaseInsensitive) == 0;
+                        });
+                  if (isCorrect)
+                  {
+                        item->setBackground(QColor(QStringLiteral("#2e7d32")));
+                        item->setForeground(Qt::white);
+                  }
+                  else if (!m_submittedAnswer.isEmpty() &&
+                           optionId.compare(m_submittedAnswer,
+                                            Qt::CaseInsensitive) == 0)
+                  {
+                        item->setBackground(QColor(QStringLiteral("#c62828")));
+                        item->setForeground(Qt::white);
+                  }
+            }
+      }
+}
+
+void GameScreen::resetAnswerInputState()
+{
+      if (m_answerDialog != nullptr)
+      {
+            disconnect(m_answerDialog, nullptr, this, nullptr);
+            m_answerDialog->reject();
+            m_answerDialog = nullptr;
+      }
+      m_submittedAnswer.clear();
+      clearAnswerOptions();
+      ui->questionTextLabel->setMinimumHeight(0);
+      ui->questionTextLabel->setMaximumHeight(QWIDGETSIZE_MAX);
+      m_pointInputEnabled = false;
+      m_correctPoint.reset();
+      m_submittedPoint.reset();
+      m_correctPointAspectRatio = 1.0;
+      m_displayedPixmapRect = {};
+      ui->questionMediaLabel->setCursor(Qt::ArrowCursor);
+}
+
+bool GameScreen::parsePointAnswer(const QString &value, QPointF *point,
+                                  double *aspectRatio) const
+{
+      const QStringList parts = value.split(QLatin1Char(','),
+                                            Qt::KeepEmptyParts);
+      if (parts.size() != 2 && parts.size() != 3)
+      {
+            return false;
+      }
+
+      bool xValid{false};
+      bool yValid{false};
+      const double x = parts[0].trimmed().toDouble(&xValid);
+      const double y = parts[1].trimmed().toDouble(&yValid);
+      if (!xValid || !yValid || !std::isfinite(x) || !std::isfinite(y))
+      {
+            return false;
+      }
+
+      double parsedAspectRatio{1.0};
+      if (parts.size() == 3)
+      {
+            bool aspectRatioValid{false};
+            const double candidate =
+                  parts[2].trimmed().toDouble(&aspectRatioValid);
+            if (!aspectRatioValid || !std::isfinite(candidate))
+            {
+                  return false;
+            }
+            if (candidate > 0.0)
+            {
+                  parsedAspectRatio = candidate;
+            }
+      }
+      *point = QPointF(x, y);
+      *aspectRatio = parsedAspectRatio;
+      return true;
 }
 
 void GameScreen::updateBalanceLabel(Player &player)

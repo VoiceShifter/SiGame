@@ -32,13 +32,20 @@ MultiplayerJoinScreen::MultiplayerJoinScreen(QWidget *parent)
                                  .toInt());
       form->addRow(tr("Host address:"), m_addressEdit);
       form->addRow(tr("Port:"), m_portSpin);
-      m_packPath = settings.value(QStringLiteral("join/packPath")).toString();
-      m_packEdit = new QLineEdit(this);
-      m_packEdit->setReadOnly(true);
+      m_packPath =
+            settings.value(QStringLiteral("multiplayer/packPath"),
+                           settings.value(QStringLiteral("join/packPath")))
+                  .toString();
       if (isValidPackDirectory(m_packPath))
       {
-            m_packEdit->setText(m_packPath);
+            m_packPath = QDir(m_packPath).absolutePath();
       }
+      else
+      {
+            m_packPath.clear();
+      }
+      m_packEdit = new QLineEdit(m_packPath, this);
+      m_packEdit->setReadOnly(true);
       auto *packButton = new QPushButton(tr("Choose pack"), this);
       auto *packRow = new QHBoxLayout;
       packRow->addWidget(m_packEdit);
@@ -58,7 +65,21 @@ MultiplayerJoinScreen::MultiplayerJoinScreen(QWidget *parent)
       m_hashLabel = new QLabel(this);
       m_hostConfigLabel = new QLabel(this);
       m_hostConfigLabel->hide();
-      m_statusLabel = new QLabel(tr("Choose the host pack before connecting."), this);
+      m_statusLabel = new QLabel(this);
+      if (m_packPath.isEmpty())
+      {
+            m_statusLabel->setText(tr("Choose the host pack before connecting."));
+      }
+      else
+      {
+            QString error;
+            const QString hash = packManifestHash(m_packPath, &error);
+            m_hashLabel->setText(
+                  hash.isEmpty() ? tr("Pack hash: unavailable")
+                                 : tr("Pack hash: %1").arg(hash));
+            m_statusLabel->setText(
+                  hash.isEmpty() ? error : tr("Cached pack is ready."));
+      }
       m_rosterList = new QListWidget(this);
       m_connectButton = new QPushButton(tr("Connect"), this);
       layout->addWidget(m_hashLabel);
@@ -91,6 +112,10 @@ void MultiplayerJoinScreen::choosePack()
       }
       m_packPath = QDir(path).absolutePath();
       m_packEdit->setText(m_packPath);
+      QSettings settings(QStringLiteral("SiGame"), QStringLiteral("SiGame"));
+      settings.setValue(QStringLiteral("multiplayer/packPath"), m_packPath);
+      settings.setValue(QStringLiteral("join/packPath"), m_packPath);
+      settings.sync();
       QString error;
       const QString hash = packManifestHash(m_packPath, &error);
       m_hashLabel->setText(hash.isEmpty() ? tr("Pack hash: unavailable")
@@ -144,6 +169,7 @@ bool MultiplayerJoinScreen::preparePack()
       settings.setValue(QStringLiteral("join/address"), m_addressEdit->text());
       settings.setValue(QStringLiteral("join/port"), m_portSpin->value());
       settings.setValue(QStringLiteral("join/packPath"), m_packPath);
+      settings.setValue(QStringLiteral("multiplayer/packPath"), m_packPath);
       settings.sync();
       return true;
 }

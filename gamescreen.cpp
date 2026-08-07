@@ -399,6 +399,24 @@ bool GameScreen::eventFilter(QObject *watched, QEvent *event)
       {
             fitAnswerOptionsTable();
       }
+      if (event->type() == QEvent::MouseButtonPress)
+      {
+            const PlayerId targetId =
+                  watched->property("secretTargetId").toString();
+            const auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            const auto target = std::find_if(
+                  m_networkPlayers.cbegin(), m_networkPlayers.cend(),
+                  [&targetId](const PlayerState &state)
+                  { return state.id == targetId; });
+            if (!targetId.isEmpty() &&
+                mouseEvent->button() == Qt::LeftButton &&
+                m_secretTargetSelection && targetId != m_localPlayerId &&
+                target != m_networkPlayers.cend() && target->isPicker)
+            {
+                  emit secretTargetRequested(targetId);
+                  return true;
+            }
+      }
       if (watched == ui->questionMediaLabel &&
           event->type() == QEvent::MouseButtonPress &&
           (m_phase == GamePhase::Answering ||
@@ -1899,7 +1917,7 @@ void GameScreen::rebuildNetworkPlayerCards()
       for (const PlayerState &state : m_networkPlayers)
       {
             auto *layout = new QVBoxLayout;
-            auto *avatar = new QPushButton;
+            auto *avatar = new QLabel;
             QPixmap picture = fallback;
             if (!state.profilePng.isEmpty())
             {
@@ -1914,13 +1932,16 @@ void GameScreen::rebuildNetworkPlayerCards()
                                    << state.id;
                   }
             }
-            avatar->setIcon(QIcon(picture));
-            avatar->setIconSize(QSize(100, 100));
-            avatar->setFixedSize(110, 110);
-            avatar->setEnabled(m_secretTargetSelection && state.isPicker &&
-                               state.id != m_localPlayerId);
-            connect(avatar, &QPushButton::clicked, this,
-                    [this, id = state.id]() { emit secretTargetRequested(id); });
+            avatar->setPixmap(
+                  picture.scaled(200, 200, Qt::KeepAspectRatio,
+                                 Qt::SmoothTransformation));
+            avatar->setScaledContents(true);
+            avatar->setProperty("secretTargetId", state.id);
+            avatar->installEventFilter(this);
+            avatar->setCursor(m_secretTargetSelection && state.isPicker &&
+                                      state.id != m_localPlayerId
+                                    ? Qt::PointingHandCursor
+                                    : Qt::ArrowCursor);
             auto *name = new QLabel(state.nickname.isEmpty()
                                           ? tr("Unnamed")
                                           : state.nickname);

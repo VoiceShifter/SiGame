@@ -1420,8 +1420,9 @@ void GameSession::beginNextQuestion()
       m_currentTheme = -1;
       m_currentQuestion = -1;
       emitPlayersChanged();
-      if (boardState().cells.isEmpty() ||
-          std::none_of(boardState().cells.cbegin(), boardState().cells.cend(),
+      const BoardState board = boardState();
+      if (board.cells.isEmpty() ||
+          std::none_of(board.cells.cbegin(), board.cells.cend(),
                        [](const BoardCell &cell) { return !cell.used; }))
       {
             m_phase = SessionPhase::Finished;

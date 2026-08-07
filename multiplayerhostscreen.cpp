@@ -10,6 +10,7 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSettings>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
@@ -18,7 +19,20 @@ MultiplayerHostScreen::MultiplayerHostScreen(QWidget *parent)
 {
       auto *layout = new QVBoxLayout(this);
       auto *form = new QFormLayout;
-      m_packEdit = new QLineEdit(this);
+      QSettings settings(QStringLiteral("SiGame"), QStringLiteral("SiGame"));
+      m_packPath =
+            settings.value(QStringLiteral("multiplayer/packPath"),
+                           settings.value(QStringLiteral("join/packPath")))
+                  .toString();
+      if (isValidPackDirectory(m_packPath))
+      {
+            m_packPath = QDir(m_packPath).absolutePath();
+      }
+      else
+      {
+            m_packPath.clear();
+      }
+      m_packEdit = new QLineEdit(m_packPath, this);
       m_packEdit->setReadOnly(true);
       auto *packButton = new QPushButton(tr("Choose pack"), this);
       auto *packRow = new QHBoxLayout;
@@ -56,7 +70,21 @@ MultiplayerHostScreen::MultiplayerHostScreen(QWidget *parent)
       form->addRow(tr("Answer wait duration (seconds):"), m_waitDurationSpin);
       layout->addLayout(form);
       m_hashLabel = new QLabel(this);
-      m_statusLabel = new QLabel(tr("Choose a valid pack to create a lobby."), this);
+      m_statusLabel = new QLabel(this);
+      if (m_packPath.isEmpty())
+      {
+            m_statusLabel->setText(tr("Choose a valid pack to create a lobby."));
+      }
+      else
+      {
+            QString error;
+            const QString hash = packManifestHash(m_packPath, &error);
+            m_hashLabel->setText(
+                  hash.isEmpty() ? tr("Pack hash: unavailable")
+                                 : tr("Pack hash: %1").arg(hash));
+            m_statusLabel->setText(
+                  hash.isEmpty() ? error : tr("Cached pack is ready."));
+      }
       m_rosterList = new QListWidget(this);
       m_hostButton = new QPushButton(tr("Start hosting"), this);
       layout->addWidget(m_hashLabel);
@@ -88,6 +116,9 @@ void MultiplayerHostScreen::choosePack()
       }
       m_packPath = QDir(path).absolutePath();
       m_packEdit->setText(m_packPath);
+      QSettings settings(QStringLiteral("SiGame"), QStringLiteral("SiGame"));
+      settings.setValue(QStringLiteral("multiplayer/packPath"), m_packPath);
+      settings.sync();
       QString error;
       const QString hash = packManifestHash(m_packPath, &error);
       m_hashLabel->setText(hash.isEmpty() ? tr("Pack hash: unavailable")

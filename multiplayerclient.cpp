@@ -139,6 +139,18 @@ void MultiplayerClient::submitAnswer(quint64 questionSequence,
       sendCommand(QStringLiteral("ANSWER_SUBMIT"), fields);
 }
 
+void MultiplayerClient::updateAnswerDraft(quint64 questionSequence,
+                                          quint64 phaseSequence,
+                                          const QString &answer)
+{
+      sendCommand(QStringLiteral("ANSWER_DRAFT"),
+                  {{QStringLiteral("requestId"), requestId()},
+                   {QStringLiteral("actionId"), number(actionId())},
+                   {QStringLiteral("questionSeq"), number(questionSequence)},
+                   {QStringLiteral("phaseSeq"), number(phaseSequence)},
+                   {QStringLiteral("answer"), answer}});
+}
+
 void MultiplayerClient::pass(quint64 questionSequence,
                              quint64 phaseSequence)
 {

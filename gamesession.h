@@ -52,8 +52,6 @@ class GameSession : public QObject
       QString secretSelectionMode() const;
       bool hasActiveQuestion() const;
 
-      void setReactionGraceMs(unsigned int graceMs);
-
     public slots:
       void startGame();
       void publishSnapshot();
@@ -74,6 +72,9 @@ class GameSession : public QObject
       void submitAnswer(PlayerId playerId, quint64 questionSequence,
                         quint64 phaseSequence, quint64 actionId,
                         const AnswerSubmission &submission);
+      void updateAnswerDraft(PlayerId playerId, quint64 questionSequence,
+                             quint64 phaseSequence, quint64 actionId,
+                             const AnswerSubmission &submission);
       void passQuestion(PlayerId playerId, quint64 questionSequence,
                         quint64 phaseSequence, quint64 actionId);
       void requestPause(PlayerId playerId, bool paused, quint64 actionId);
@@ -187,10 +188,8 @@ class GameSession : public QObject
       qint64 m_reactionDeadlineMs{};
       unsigned int m_phaseDuration{};
       unsigned int m_remainingMs{};
-      unsigned int m_reactionGraceMs{250U};
       bool m_paused{};
       bool m_started{};
-      bool m_reactionDecisionPending{};
       SessionPhase m_phase{SessionPhase::Lobby};
       quint64 m_phaseSequence{};
       quint64 m_questionSequence{};
@@ -204,6 +203,7 @@ class GameSession : public QObject
       QSet<PlayerId> m_forAllExpected;
       QHash<PlayerId, ForAllAttempt> m_forAllAttempts;
       QHash<PlayerId, int> m_wrongAmounts;
+      QHash<PlayerId, AnswerSubmission> m_answerDrafts;
       QHash<PlayerId, QString> m_submittedAnswers;
       QHash<PlayerId, bool> m_correctForCurrentQuestion;
       QHash<PlayerId, bool> m_votedAppeal;

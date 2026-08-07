@@ -92,6 +92,7 @@ class GameScreen : public QWidget
       void secretTargetRequested(PlayerId targetId);
       void secretWagerSubmitted(int amount);
       void reactionClaimRequested(unsigned int elapsedMs);
+      void answerDraftChanged(const QString &answer);
       void answerSubmitted(const AnswerSubmission &submission);
       void passRequested();
       void pauseRequested(bool paused);
@@ -115,12 +116,22 @@ class GameScreen : public QWidget
     private:
       using GamePhase = SessionPhase;
 
+      enum class PlayerGlow
+      {
+            None,
+            Reaction,
+            Correct,
+            Incorrect
+      };
+
       struct Player
       {
             QString name;
             int balance{};
             bool hasPassed{};
+            QLabel *avatarLabel{};
             QLabel *balanceLabel{};
+            PlayerGlow glow{PlayerGlow::None};
       };
 
       void startPhaseTimer(GamePhase phase, unsigned int durationMs);
@@ -154,6 +165,9 @@ class GameScreen : public QWidget
                             double *aspectRatio) const;
       void applyNetworkQuestion(const QuestionPresentation &presentation);
       void applyNetworkBoard(const BoardState &board);
+      void applyReactionWinner(const PlayerId &playerId);
+      void applyPlayerGlow(QLabel *avatar, PlayerGlow glow);
+      void setSinglePlayerGlow(PlayerGlow glow, bool clearAfterDelay);
       void rebuildNetworkPlayerCards();
       void clearNetworkPlayerCards();
       void setNetworkControls();
@@ -165,6 +179,7 @@ class GameScreen : public QWidget
       static void deleteLayoutItems(QLayout *layout);
 
       static constexpr unsigned int AnswerRevealDuration{5000U};
+      static constexpr unsigned int PlayerResultGlowDuration{3000U};
 
       Ui::GameScreen *ui;
       QTimer *m_tickTimer;
@@ -200,6 +215,7 @@ class GameScreen : public QWidget
       PlayerId m_pickerId;
       PlayerId m_answerOwnerId;
       QVector<PlayerState> m_networkPlayers;
+      QHash<PlayerId, PlayerGlow> m_playerGlows;
       BoardState m_networkBoard;
       PhaseState m_networkPhase;
       std::optional<Question> m_networkQuestion;
@@ -207,6 +223,7 @@ class GameScreen : public QWidget
       quint64 m_networkPhaseSequence{};
       quint64 m_localActionId{1};
       bool m_networkAnswerSubmitted{};
+      bool m_networkAnswerInputOpened{};
       bool m_networkPaused{};
       bool m_canPause{};
       bool m_canAnswer{};

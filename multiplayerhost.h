@@ -55,6 +55,9 @@ class MultiplayerHost : public QObject
       void onAnswerSubmitted(PlayerId playerId, quint64 questionSequence,
                              quint64 phaseSequence, quint64 actionId,
                              const AnswerSubmission &submission);
+      void onAnswerDraftChanged(PlayerId playerId, quint64 questionSequence,
+                                quint64 phaseSequence, quint64 actionId,
+                                const QString &answer);
       void onQuestionSelected(PlayerId playerId, int roundIndex,
                               int themeIndex, int questionIndex,
                               quint64 actionId);

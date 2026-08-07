@@ -10,6 +10,7 @@
 #include <QDialog>
 #include <QDir>
 #include <QFontMetrics>
+#include <QGraphicsDropShadowEffect>
 #include <QInputDialog>
 #include <QMouseEvent>
 #include <QPainter>
@@ -144,6 +145,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                                    m_canAnswer)
                           {
                                 ui->AnswerBytton->setEnabled(false);
+                                m_networkAnswerInputOpened = true;
                                 openAnswerInput();
                           }
                           return;
@@ -156,6 +158,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                     ui->AnswerBytton->setEnabled(false);
                     ui->passButton->setEnabled(false);
                     stopReactionFlash();
+                    setSinglePlayerGlow(PlayerGlow::Reaction, false);
                     const Question &question = currentQuestion();
                     m_answerResultApplied = false;
                     const unsigned int duration =
@@ -214,7 +217,11 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       connect(ui->appealNoButton, &QPushButton::clicked, this,
               [this]() { emit appealVoteSubmitted(false); });
 
-      m_questionFrameStyleSheet = ui->questionFrame->styleSheet();
+      m_questionFrameStyleSheet =
+            ui->questionFrame->styleSheet() +
+            QStringLiteral(
+                  "\nQFrame#questionFrame { border: 5px solid transparent; }");
+      ui->questionFrame->setStyleSheet(m_questionFrameStyleSheet);
       connect(m_flashTimer, &QTimer::timeout, this,
               [this]()
               {
@@ -226,9 +233,10 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                     }
                     ui->questionFrame->setStyleSheet(
                           m_flashStep % 2 == 0
-                                ? QStringLiteral(
-                                        "QFrame#questionFrame { border: 5px "
-                                        "solid yellow; }")
+                                ? m_questionFrameStyleSheet +
+                                        QStringLiteral(
+                                              "\nQFrame#questionFrame { border: "
+                                              "5px solid yellow; }")
                                 : m_questionFrameStyleSheet);
               });
 
@@ -349,6 +357,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                   playerPixmap.scaled(200, 200, Qt::KeepAspectRatio,
                                       Qt::SmoothTransformation));
             playerPfp->setScaledContents(1);
+            applyPlayerGlow(playerPfp, PlayerGlow::None);
             const QString playerDisplayName =
                   Index == 0 && !Nickname.isEmpty()
                         ? Nickname
@@ -361,7 +370,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
             playerLayout->setStretch(0, 0);
             ui->PlayersLayout->addLayout(playerLayout);
             m_players.push_back(
-                  {playerDisplayName, 0, false, balanceLabel});
+                  {playerDisplayName, 0, false, playerPfp, balanceLabel});
             updateBalanceLabel(m_players.back());
       }
 
@@ -713,7 +722,18 @@ void GameScreen::showAnswer()
           (question.answerType != AnswerType::Point ||
            (m_correctPoint.has_value() && !m_displayedPixmap.isNull())))
       {
-            applyAnswerResult(false, QString());
+            if (m_answerDialog != nullptr)
+            {
+                  handleSubmittedAnswer(m_answerDialog->textValue());
+                  if (m_phase == GamePhase::ShowingAnswer)
+                  {
+                        return;
+                  }
+            }
+            else
+            {
+                  applyAnswerResult(false, QString());
+            }
       }
       if (m_answerDialog != nullptr && m_answerDialog->isVisible())
       {
@@ -1003,8 +1023,10 @@ void GameScreen::startReactionFlash()
 {
       stopReactionFlash();
       m_flashStep = 0;
-      ui->questionFrame->setStyleSheet(QStringLiteral(
-            "QFrame#questionFrame { border: 5px solid yellow; }"));
+      ui->questionFrame->setStyleSheet(
+            m_questionFrameStyleSheet +
+            QStringLiteral(
+                  "\nQFrame#questionFrame { border: 5px solid yellow; }"));
       m_flashTimer->start(120);
 }
 
@@ -1052,6 +1074,16 @@ void GameScreen::openTextAnswerDialog()
       m_answerDialog->setLabelText(tr("Enter your answer:"));
       connect(m_answerDialog, &QInputDialog::textValueSelected, this,
               &GameScreen::handleSubmittedAnswer);
+      connect(m_answerDialog, &QInputDialog::textValueChanged, this,
+              [this](const QString &answer)
+              {
+                    if (m_mode != GameScreenMode::SinglePlayer &&
+                        (currentQuestion().answerType == AnswerType::Text ||
+                         currentQuestion().answerType == AnswerType::Unknown))
+                    {
+                          emit answerDraftChanged(answer);
+                    }
+              });
       connect(m_answerDialog, &QDialog::rejected, this,
               &GameScreen::handleAnswerDeclined);
       m_answerDialog->open();
@@ -1185,6 +1217,9 @@ void GameScreen::applyAnswerResult(bool isCorrect,
 
       m_answerResultApplied = true;
       m_submittedAnswer = submittedAnswer;
+      setSinglePlayerGlow(isCorrect ? PlayerGlow::Correct
+                                    : PlayerGlow::Incorrect,
+                          true);
       Player &player = m_players.front();
       if (isCorrect)
       {
@@ -1210,13 +1245,13 @@ void GameScreen::applyAuthoritativeAnswerResult(const AnswerResult &result)
             return;
       }
       m_submittedAnswer = result.submitted;
-      if (m_answerDialog != nullptr && m_answerDialog->isVisible())
-      {
-            m_answerDialog->reject();
-      }
       if (result.playerId == m_localPlayerId)
       {
             m_networkAnswerSubmitted = true;
+      }
+      if (m_answerDialog != nullptr && m_answerDialog->isVisible())
+      {
+            m_answerDialog->reject();
       }
       if (result.answerKind == AnswerType::Select &&
           !result.submitted.isEmpty())
@@ -1347,6 +1382,7 @@ void GameScreen::resetAnswerInputState()
       }
       m_submittedAnswer.clear();
       m_networkAnswerSubmitted = false;
+      m_networkAnswerInputOpened = false;
       clearAnswerOptions();
       ui->questionTextLabel->setMinimumHeight(0);
       ui->questionTextLabel->setMaximumHeight(QWIDGETSIZE_MAX);
@@ -1429,6 +1465,13 @@ void GameScreen::bindHost(MultiplayerHost *host)
                                             m_networkPhaseSequence,
                                             nextLocalActionId(), elapsed);
               });
+      connect(this, &GameScreen::answerDraftChanged, this,
+              [this](const QString &answer)
+              {
+                    m_host->onAnswerDraftChanged(
+                          m_localPlayerId, m_networkQuestionSequence,
+                          m_networkPhaseSequence, nextLocalActionId(), answer);
+              });
       connect(this, &GameScreen::answerSubmitted, this,
               [this](const AnswerSubmission &submission)
               {
@@ -1499,6 +1542,10 @@ void GameScreen::bindClient(MultiplayerClient *client)
                     m_client->submitReaction(m_networkQuestionSequence,
                                              m_networkPhaseSequence, elapsed);
               });
+      connect(this, &GameScreen::answerDraftChanged, this,
+              [this](const QString &answer)
+              { m_client->updateAnswerDraft(m_networkQuestionSequence,
+                                            m_networkPhaseSequence, answer); });
       connect(this, &GameScreen::answerSubmitted, this,
               [this](const AnswerSubmission &submission)
               { m_client->submitAnswer(m_networkQuestionSequence,
@@ -1638,6 +1685,15 @@ void GameScreen::applyPhase(const PhaseState &phase)
       m_forAllAnswering = phase.phase == SessionPhase::ForAllAnswering;
       setNetworkPhaseTimer(phase);
       setNetworkControls();
+      if (phase.phase == SessionPhase::Answering &&
+          m_answerOwnerId == m_localPlayerId &&
+          m_networkQuestion.has_value() && !m_networkAnswerSubmitted &&
+          !m_networkAnswerInputOpened)
+      {
+            m_networkAnswerInputOpened = true;
+            ui->AnswerBytton->setEnabled(false);
+            openAnswerInput();
+      }
 }
 
 void GameScreen::applyQuestion(const QuestionPresentation &question)
@@ -1658,6 +1714,9 @@ void GameScreen::applyAnswerOwner(const PlayerId &playerId)
 void GameScreen::applyAnswerResult(const AnswerResult &result)
 {
       applyAuthoritativeAnswerResult(result);
+      const PlayerGlow glow = result.correct ? PlayerGlow::Correct
+                                             : PlayerGlow::Incorrect;
+      m_playerGlows.insert(result.playerId, glow);
       for (PlayerState &state : m_networkPlayers)
       {
             if (state.id == result.playerId)
@@ -1670,6 +1729,16 @@ void GameScreen::applyAnswerResult(const AnswerResult &result)
       }
       rebuildNetworkPlayerCards();
       setNetworkControls();
+      QTimer::singleShot(
+            PlayerResultGlowDuration, this,
+            [this, playerId = result.playerId, glow]()
+            {
+                  if (m_playerGlows.value(playerId) == glow)
+                  {
+                        m_playerGlows.remove(playerId);
+                        rebuildNetworkPlayerCards();
+                  }
+            });
 }
 
 void GameScreen::applyReveal(const AnswerReveal &reveal)
@@ -1906,6 +1975,92 @@ void GameScreen::applyNetworkBoard(const BoardState &board)
       }
 }
 
+void GameScreen::applyReactionWinner(const PlayerId &playerId)
+{
+      for (auto iterator = m_playerGlows.begin();
+           iterator != m_playerGlows.end();)
+      {
+            if (iterator.value() == PlayerGlow::Reaction)
+            {
+                  iterator = m_playerGlows.erase(iterator);
+            }
+            else
+            {
+                  ++iterator;
+            }
+      }
+      m_playerGlows.insert(playerId, PlayerGlow::Reaction);
+      rebuildNetworkPlayerCards();
+}
+
+void GameScreen::applyPlayerGlow(QLabel *avatar, PlayerGlow glow)
+{
+      if (avatar == nullptr)
+      {
+            return;
+      }
+      QColor glowColor(Qt::transparent);
+      QString borderColor = QStringLiteral("transparent");
+      switch (glow)
+      {
+      case PlayerGlow::Reaction:
+            glowColor = QColor(QStringLiteral("#ffeb3b"));
+            break;
+      case PlayerGlow::Correct:
+            glowColor = QColor(QStringLiteral("#00c853"));
+            break;
+      case PlayerGlow::Incorrect:
+            glowColor = QColor(QStringLiteral("#d50000"));
+            break;
+      case PlayerGlow::None:
+            break;
+      }
+      if (glow != PlayerGlow::None)
+      {
+            borderColor = glowColor.name();
+      }
+      auto *effect = qobject_cast<QGraphicsDropShadowEffect *>(
+            avatar->graphicsEffect());
+      if (effect == nullptr)
+      {
+            effect = new QGraphicsDropShadowEffect(avatar);
+            effect->setBlurRadius(32.0);
+            effect->setOffset(0.0);
+            avatar->setGraphicsEffect(effect);
+      }
+      effect->setColor(glowColor);
+      avatar->setStyleSheet(
+            QStringLiteral("QLabel { border: 4px solid %1; }")
+                  .arg(borderColor));
+}
+
+void GameScreen::setSinglePlayerGlow(PlayerGlow glow, bool clearAfterDelay)
+{
+      if (m_mode != GameScreenMode::SinglePlayer || m_players.empty())
+      {
+            return;
+      }
+      Player &player = m_players.front();
+      player.glow = glow;
+      applyPlayerGlow(player.avatarLabel, glow);
+      if (!clearAfterDelay)
+      {
+            return;
+      }
+      QTimer::singleShot(
+            PlayerResultGlowDuration, this,
+            [this, glow]()
+            {
+                  if (m_mode == GameScreenMode::SinglePlayer &&
+                      !m_players.empty() && m_players.front().glow == glow)
+                  {
+                        m_players.front().glow = PlayerGlow::None;
+                        applyPlayerGlow(m_players.front().avatarLabel,
+                                        PlayerGlow::None);
+                  }
+            });
+}
+
 void GameScreen::rebuildNetworkPlayerCards()
 {
       if (m_mode == GameScreenMode::SinglePlayer)
@@ -1936,6 +2091,8 @@ void GameScreen::rebuildNetworkPlayerCards()
                   picture.scaled(200, 200, Qt::KeepAspectRatio,
                                  Qt::SmoothTransformation));
             avatar->setScaledContents(true);
+            applyPlayerGlow(
+                  avatar, m_playerGlows.value(state.id, PlayerGlow::None));
             avatar->setProperty("secretTargetId", state.id);
             avatar->installEventFilter(this);
             avatar->setCursor(m_secretTargetSelection && state.isPicker &&
@@ -2029,6 +2186,9 @@ void GameScreen::connectHostSignals(MultiplayerHost *host)
               &GameScreen::applyQuestion);
       connect(session, &GameSession::reactionOpened, this,
               [this](const ReactionState &) { m_reactionElapsedTimer.restart(); });
+      connect(session, &GameSession::reactionWinner, this,
+              [this](const PlayerId &playerId, unsigned int)
+              { applyReactionWinner(playerId); });
       connect(session, &GameSession::answerOwnerChanged, this,
               &GameScreen::applyAnswerOwner);
       connect(session, &GameSession::answerResult, this,
@@ -2073,6 +2233,9 @@ void GameScreen::connectClientSignals(MultiplayerClient *client)
               &GameScreen::applyBoard);
       connect(client, &MultiplayerClient::questionReceived, this,
               &GameScreen::applyQuestion);
+      connect(client, &MultiplayerClient::reactionWinnerReceived, this,
+              [this](const PlayerId &playerId, unsigned int)
+              { applyReactionWinner(playerId); });
       connect(client, &MultiplayerClient::answerOwnerReceived, this,
               [this](const PlayerId &id, unsigned int) { applyAnswerOwner(id); });
       connect(client, &MultiplayerClient::pickerReceived, this,

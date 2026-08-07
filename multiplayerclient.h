@@ -37,6 +37,8 @@ class MultiplayerClient : public QObject
                           unsigned int elapsedMs);
       void submitAnswer(quint64 questionSequence, quint64 phaseSequence,
                         const AnswerSubmission &submission);
+      void updateAnswerDraft(quint64 questionSequence, quint64 phaseSequence,
+                             const QString &answer);
       void pass(quint64 questionSequence, quint64 phaseSequence);
       void selectSecretTarget(quint64 questionSequence, PlayerId targetId);
       void submitSecretWager(quint64 questionSequence, int amount);

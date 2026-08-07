@@ -255,6 +255,17 @@ void MultiplayerHost::onAnswerSubmitted(PlayerId playerId,
                               actionId, submission);
 }
 
+void MultiplayerHost::onAnswerDraftChanged(
+      PlayerId playerId, quint64 questionSequence, quint64 phaseSequence,
+      quint64 actionId, const QString &answer)
+{
+      AnswerSubmission submission;
+      submission.answerType = AnswerType::Text;
+      submission.answer = answer;
+      m_session->updateAnswerDraft(playerId, questionSequence, phaseSequence,
+                                   actionId, submission);
+}
+
 void MultiplayerHost::onQuestionSelected(PlayerId playerId, int roundIndex,
                                          int themeIndex, int questionIndex,
                                          quint64 actionId)
@@ -787,6 +798,24 @@ void MultiplayerHost::handleAction(Peer &peer,
             }
             onReactionClaim(peer.playerId, questionSequence, phaseSequence,
                             actionId, static_cast<unsigned int>(elapsed));
+            return;
+      }
+      if (frame.command == QStringLiteral("ANSWER_DRAFT"))
+      {
+            if (!parseUIntField(fields, QStringLiteral("questionSeq"),
+                                &questionSequence) ||
+                !parseUIntField(fields, QStringLiteral("phaseSeq"),
+                                &phaseSequence) ||
+                !fields.contains(QStringLiteral("answer")))
+            {
+                  sendError(peer, QStringLiteral("BAD_FIELD"),
+                            QStringLiteral("Invalid answer draft"),
+                            peer.requestId);
+                  return;
+            }
+            onAnswerDraftChanged(peer.playerId, questionSequence,
+                                 phaseSequence, actionId,
+                                 fields.value(QStringLiteral("answer")));
             return;
       }
       if (frame.command == QStringLiteral("ANSWER_SUBMIT"))
@@ -1639,20 +1668,7 @@ void MultiplayerHost::startPings()
               });
       connect(m_pingWorker, &PingWorker::averageUpdated, this,
               [this](const PlayerId &playerId, double rttMs)
-              {
-                    m_remoteRtt.insert(playerId, rttMs);
-                    double maximumRtt = 0.0;
-                    for (auto iterator = m_remoteRtt.cbegin();
-                         iterator != m_remoteRtt.cend(); ++iterator)
-                    {
-                          if (isConnected(iterator.key()))
-                          {
-                                maximumRtt = std::max(maximumRtt, iterator.value());
-                          }
-                    }
-                    m_session->setReactionGraceMs(
-                          static_cast<unsigned int>(std::ceil(maximumRtt)));
-              });
+              { m_remoteRtt.insert(playerId, rttMs); });
       connect(m_session, &GameSession::playersChanged, m_pingWorker,
               [worker = m_pingWorker, localId = m_localPlayerId](
                     const QVector<PlayerState> &players)

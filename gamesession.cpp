@@ -272,11 +272,6 @@ bool GameSession::hasActiveQuestion() const
       return currentQuestion() != nullptr && m_questionSequence != 0;
 }
 
-void GameSession::setReactionGraceMs(unsigned int graceMs)
-{
-      m_reactionGraceMs = graceMs;
-}
-
 void GameSession::publishSnapshot()
 {
       emit snapshotReady(snapshot());
@@ -537,6 +532,17 @@ void GameSession::submitReaction(PlayerId playerId, quint64 questionSequence,
       }
       m_reactionClaims.insert(playerId,
                               {elapsedMs, comparisonElapsedMs, actionId});
+      const bool allEligiblePlayersClaimed = std::all_of(
+            m_players.cbegin(), m_players.cend(),
+            [this](const PlayerState &state)
+            {
+                  return !isConnected(state.id) || !isEligible(state.id) ||
+                         m_reactionClaims.contains(state.id);
+            });
+      if (allEligiblePlayersClaimed)
+      {
+            decideReactionWinner();
+      }
 }
 
 void GameSession::submitAnswer(PlayerId playerId, quint64 questionSequence,
@@ -581,6 +587,44 @@ void GameSession::submitAnswer(PlayerId playerId, quint64 questionSequence,
             return;
       }
       submitAnswerInternal(playerId, submission, false);
+}
+
+void GameSession::updateAnswerDraft(
+      PlayerId playerId, quint64 questionSequence, quint64 phaseSequence,
+      quint64 actionId, const AnswerSubmission &submission)
+{
+      if (m_phase != SessionPhase::Answering &&
+          m_phase != SessionPhase::ForAllAnswering)
+      {
+            reject(playerId, QStringLiteral("WRONG_PHASE"),
+                   QStringLiteral("An answer draft cannot be updated now"));
+            return;
+      }
+      if (!requireSequence(playerId, questionSequence, phaseSequence))
+      {
+            reject(playerId, QStringLiteral("STALE_SEQUENCE"),
+                   QStringLiteral("The answer draft sequence is stale"));
+            return;
+      }
+      const Question *question = currentQuestion();
+      const bool allowed =
+            m_phase == SessionPhase::Answering
+                  ? playerId == m_answerOwner && isConnected(playerId)
+                  : isConnected(playerId) &&
+                          m_forAllExpected.contains(playerId) &&
+                          !m_forAllAttempts.value(playerId).submitted;
+      if (!allowed || question == nullptr ||
+          !validateSubmission(*question, submission))
+      {
+            reject(playerId, QStringLiteral("PLAYER_INELIGIBLE"),
+                   QStringLiteral("This player cannot update the answer draft"));
+            return;
+      }
+      if (!acceptAction(playerId, actionId))
+      {
+            return;
+      }
+      m_answerDrafts.insert(playerId, submission);
 }
 
 void GameSession::passQuestion(PlayerId playerId, quint64 questionSequence,
@@ -844,13 +888,6 @@ void GameSession::tick()
       {
             return;
       }
-      if (m_phase == SessionPhase::WaitingForReaction &&
-          !m_reactionDecisionPending && m_reactionGraceMs > 0)
-      {
-            m_reactionDecisionPending = true;
-            m_deadlineMs = m_clock.elapsed() + m_reactionGraceMs;
-            return;
-      }
       m_timer.stop();
       handleTimeout();
 }
@@ -938,7 +975,6 @@ void GameSession::startPhase(SessionPhase phase, unsigned int durationMs,
       m_remainingMs = durationMs;
       m_deadlineMs = m_clock.elapsed() + durationMs;
       m_paused = false;
-      m_reactionDecisionPending = false;
       ++m_phaseSequence;
       const PhaseState state{m_phase,
                              m_phaseSequence,
@@ -1026,19 +1062,21 @@ void GameSession::handleTimeout()
             }
             break;
       case SessionPhase::WaitingForReaction:
-            if (m_reactionDecisionPending)
-            {
-                  decideReactionWinner();
-            }
-            else
-            {
-                  revealAnswer();
-            }
+            decideReactionWinner();
             break;
       case SessionPhase::Answering:
             if (!m_answerOwner.isEmpty())
             {
-                  submitAnswerInternal(m_answerOwner, {}, true);
+                  const auto draft = m_answerDrafts.constFind(m_answerOwner);
+                  if (draft == m_answerDrafts.cend())
+                  {
+                        submitAnswerInternal(m_answerOwner, {}, true);
+                  }
+                  else
+                  {
+                        submitAnswerInternal(m_answerOwner, draft.value(),
+                                             false);
+                  }
             }
             else
             {
@@ -1128,7 +1166,6 @@ void GameSession::beginReaction()
             return;
       }
       m_reactionClaims.clear();
-      m_reactionDecisionPending = false;
       startPhase(SessionPhase::WaitingForReaction, m_config.answerWaitDurationMs);
       m_reactionDeadlineMs = m_deadlineMs;
       emit reactionOpened({m_questionSequence, m_phaseSequence,
@@ -1210,6 +1247,13 @@ void GameSession::finishForAll()
                   continue;
             }
             ForAllAttempt attempt = m_forAllAttempts.value(id);
+            if (!attempt.submitted && m_answerDrafts.contains(id))
+            {
+                  attempt.submission = m_answerDrafts.value(id);
+                  attempt.correct =
+                        isCorrectSubmission(*question, attempt.submission);
+                  attempt.submitted = true;
+            }
             const bool correct = attempt.submitted && attempt.correct;
             const int amount = question->price;
             PlayerState *state = player(id);
@@ -1411,6 +1455,7 @@ void GameSession::beginNextQuestion()
       m_lastReveal.reset();
       m_questionStates.clear();
       m_wrongAmounts.clear();
+      m_answerDrafts.clear();
       m_submittedAnswers.clear();
       m_correctForCurrentQuestion.clear();
       m_appeal.reset();
@@ -1474,6 +1519,7 @@ void GameSession::resetQuestionState()
 {
       m_questionStates.clear();
       m_wrongAmounts.clear();
+      m_answerDrafts.clear();
       m_submittedAnswers.clear();
       m_correctForCurrentQuestion.clear();
       for (PlayerState &state : m_players)

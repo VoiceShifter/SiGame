@@ -19,8 +19,12 @@ MainWindow::MainWindow(QWidget *parent)
       auto *quitShortcut = new QShortcut(QKeySequence("Ctrl+Q"), this);
       connect(quitShortcut, &QShortcut::activated, this,
               &MainWindow::showExitPopup);
+      connect(ui->joinButton, &QPushButton::clicked, this,
+              &MainWindow::loadJoinSettings);
       connect(ui->singleButton, &QPushButton::clicked, this,
               &MainWindow::loadSingleSettings);
+      connect(ui->hostButton, &QPushButton::clicked, this,
+              &MainWindow::loadMultiplayer);
       connect(ui->exitButton, &QPushButton::clicked, this,
               &MainWindow::showExitPopup);
 }
@@ -57,10 +61,79 @@ void MainWindow::loadSingleGame(int PlayersCount, const QString &GamepackPath,
 
 void MainWindow::loadSettings() {}
 
-void MainWindow::loadMultiplayer() {}
+void MainWindow::loadMultiplayer()
+{
+      hostScreen = new MultiplayerHostScreen(this);
+      stack->addWidget(hostScreen);
+      setCentralWidget(stack);
+      stack->setCurrentWidget(hostScreen);
+      connect(hostScreen, &MultiplayerHostScreen::gameStarted, this,
+              &MainWindow::loadHostGame);
+}
+
+void MainWindow::loadJoinSettings()
+{
+      joinScreen = new MultiplayerJoinScreen(this);
+      stack->addWidget(joinScreen);
+      setCentralWidget(stack);
+      stack->setCurrentWidget(joinScreen);
+      connect(joinScreen, &MultiplayerJoinScreen::gameStarted, this,
+              &MainWindow::loadClientGame);
+}
+
+void MainWindow::loadHostGame(MultiplayerHost *host, const QString &packPath)
+{
+      if (host == nullptr)
+      {
+            return;
+      }
+      const GameConfig &config = host->config();
+      gameScreen = new GameScreen(
+            1, packPath, QString(), QString(),
+            static_cast<int>(config.answerDurationMs / 1000U),
+            static_cast<int>(config.questionDurationMs / 1000U),
+            static_cast<int>(config.questionPickDurationMs / 1000U),
+            static_cast<int>(config.answerWaitDurationMs / 1000U),
+            GameScreenMode::MultiplayerHost);
+      stack->addWidget(gameScreen);
+      setCentralWidget(stack);
+      stack->setCurrentWidget(gameScreen);
+      gameScreen->bindHost(host);
+}
+
+void MainWindow::loadClientGame(MultiplayerClient *client,
+                                const QString &packPath)
+{
+      if (client == nullptr)
+      {
+            return;
+      }
+      const GameConfig &config = client->config();
+      gameScreen = new GameScreen(
+            1, packPath, QString(), QString(),
+            static_cast<int>(config.answerDurationMs / 1000U),
+            static_cast<int>(config.questionDurationMs / 1000U),
+            static_cast<int>(config.questionPickDurationMs / 1000U),
+            static_cast<int>(config.answerWaitDurationMs / 1000U),
+            GameScreenMode::MultiplayerClient);
+      stack->addWidget(gameScreen);
+      setCentralWidget(stack);
+      stack->setCurrentWidget(gameScreen);
+      gameScreen->bindClient(client);
+}
 
 void MainWindow::showExitPopup()
 {
       if (exitPopup->exec() == QMessageBox::Yes)
+      {
+            if (hostScreen != nullptr && hostScreen->host() != nullptr)
+            {
+                  hostScreen->host()->stop();
+            }
+            if (joinScreen != nullptr && joinScreen->client() != nullptr)
+            {
+                  joinScreen->client()->disconnectFromHost();
+            }
             close();
+      }
 }

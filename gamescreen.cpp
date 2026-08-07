@@ -1,8 +1,12 @@
 #include "gamescreen.h"
+#include "multiplayerclient.h"
+#include "multiplayerhost.h"
 #include "ui_gamescreen.h"
 
 #include <QColor>
 #include <QDebug>
+#include <QFileInfo>
+#include <QHBoxLayout>
 #include <QDialog>
 #include <QDir>
 #include <QFontMetrics>
@@ -10,9 +14,11 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPropertyAnimation>
+#include <QPushButton>
 #include <QRandomGenerator>
 #include <QResizeEvent>
 #include <QScreen>
+#include <QSet>
 #include <QStringList>
 #include <QTimer>
 
@@ -24,9 +30,20 @@
 GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                        const QString &ProfilePicturePath,
                        const QString &Nickname, int AnswerDuration,
+                       int QuestionDuration, int QuestionPickDuration,
+                       int AnswerWaitDuration, QWidget *parent)
+      : GameScreen(PlayerCount, GamepackPath, ProfilePicturePath, Nickname,
+                   AnswerDuration, QuestionDuration, QuestionPickDuration,
+                   AnswerWaitDuration, GameScreenMode::SinglePlayer, parent)
+{
+}
+
+GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
+                       const QString &ProfilePicturePath,
+                       const QString &Nickname, int AnswerDuration,
                        int QuestionDuration,
                        int QuestionPickDuration, int AnswerWaitDuration,
-                       QWidget *parent)
+                       GameScreenMode mode, QWidget *parent)
       : QWidget(parent), ui(new Ui::GameScreen), m_tickTimer(new QTimer(this)),
         m_globalTimer(new QElapsedTimer),
         m_progressAnimation(new QPropertyAnimation(this)),
@@ -38,6 +55,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
         m_answerWaitDuration(
               static_cast<unsigned int>(AnswerWaitDuration) * 1000U)
 {
+      m_mode = mode;
       ui->setupUi(this);
       ui->progressBar->setRange(0, 1000);
       m_progressAnimation->setTargetObject(ui->progressBar);
@@ -55,9 +73,14 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       connect(ui->answerOptionsTable, &QTableWidget::cellClicked, this,
               [this](int row, int column)
               {
-                    if (m_phase != GamePhase::Answering ||
-                        m_answerResultApplied ||
-                        currentQuestion().answerType != AnswerType::Select)
+                    if ((m_phase != GamePhase::Answering &&
+                         m_phase != GamePhase::ForAllAnswering) ||
+                        (m_mode == GameScreenMode::SinglePlayer
+                              ? m_answerResultApplied
+                              : m_networkAnswerSubmitted) ||
+                        ((m_mode != GameScreenMode::SinglePlayer &&
+                          !m_networkQuestion.has_value()) ||
+                         currentQuestion().answerType != AnswerType::Select))
                     {
                           return;
                     }
@@ -99,6 +122,32 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       connect(ui->AnswerBytton, &QPushButton::clicked, this,
               [this]()
               {
+                    if (m_mode != GameScreenMode::SinglePlayer)
+                    {
+                          if (m_phase == GamePhase::WaitingForReaction)
+                          {
+                                ui->AnswerBytton->setEnabled(false);
+                                ui->passButton->setEnabled(false);
+                                stopReactionFlash();
+                                const unsigned int elapsed =
+                                      m_reactionElapsedTimer.isValid()
+                                            ? static_cast<unsigned int>(
+                                                  std::max<qint64>(
+                                                        0,
+                                                        m_reactionElapsedTimer
+                                                              .elapsed()))
+                                            : 0U;
+                                emit reactionClaimRequested(elapsed);
+                          }
+                          else if ((m_phase == GamePhase::Answering ||
+                                    m_phase == GamePhase::ForAllAnswering) &&
+                                   m_canAnswer)
+                          {
+                                ui->AnswerBytton->setEnabled(false);
+                                openAnswerInput();
+                          }
+                          return;
+                    }
                     if (m_phase != GamePhase::WaitingForReaction)
                     {
                           return;
@@ -107,12 +156,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                     ui->AnswerBytton->setEnabled(false);
                     ui->passButton->setEnabled(false);
                     stopReactionFlash();
-                    const Question &question =
-                          m_game.rounds.front()
-                                .themes[static_cast<std::size_t>(
-                                      m_currentThemeIndex)]
-                                .questions[static_cast<std::size_t>(
-                                      m_currentQuestionIndex)];
+                    const Question &question = currentQuestion();
                     m_answerResultApplied = false;
                     const unsigned int duration =
                           question.answerDuration > 0
@@ -126,6 +170,12 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       connect(ui->passButton, &QPushButton::clicked, this,
               [this]()
               {
+                    if (m_mode != GameScreenMode::SinglePlayer)
+                    {
+                          ui->passButton->setEnabled(false);
+                          emit passRequested();
+                          return;
+                    }
                     if (m_players.empty() || m_currentThemeIndex < 0)
                     {
                           return;
@@ -141,6 +191,28 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                           showAnswer();
                     }
               });
+      connect(ui->pushButton_3, &QPushButton::clicked, this,
+              [this]()
+              {
+                    if (m_mode != GameScreenMode::SinglePlayer && m_canPause)
+                    {
+                          emit pauseRequested(true);
+                    }
+              });
+      connect(ui->pushButton_5, &QPushButton::clicked, this,
+              [this]()
+              {
+                    if (m_mode != GameScreenMode::SinglePlayer && m_networkPaused)
+                    {
+                          emit pauseRequested(false);
+                    }
+              });
+      connect(ui->appealButton, &QPushButton::clicked, this,
+              [this]() { emit appealRequested(); });
+      connect(ui->appealYesButton, &QPushButton::clicked, this,
+              [this]() { emit appealVoteSubmitted(true); });
+      connect(ui->appealNoButton, &QPushButton::clicked, this,
+              [this]() { emit appealVoteSubmitted(false); });
 
       m_questionFrameStyleSheet = ui->questionFrame->styleSheet();
       connect(m_flashTimer, &QTimer::timeout, this,
@@ -226,9 +298,21 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                         connect(button, &QPushButton::clicked, this,
                                 [this, themeIndex, questionIndex]()
                                 {
-                                      emit questionSelected(themeIndex,
-                                                            questionIndex);
+                                      if (m_mode == GameScreenMode::SinglePlayer)
+                                      {
+                                            emit questionSelected(themeIndex,
+                                                                  questionIndex);
+                                      }
+                                      else
+                                      {
+                                            emit questionPickRequested(
+                                                  0, themeIndex, questionIndex);
+                                      }
                                 });
+                        if (m_mode != GameScreenMode::SinglePlayer)
+                        {
+                              button->setEnabled(false);
+                        }
                         ui->tableWidget->setCellWidget(themeIndex,
                                                        questionIndex, button);
                   }
@@ -287,7 +371,19 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       ui->answerOptionsTable->hide();
       ui->answerOptionsContainer->hide();
       ui->passButton->setEnabled(false);
-      returnToBoard();
+      ui->appealButton->hide();
+      ui->appealYesButton->hide();
+      ui->appealNoButton->hide();
+      if (m_mode == GameScreenMode::SinglePlayer)
+      {
+            returnToBoard();
+      }
+      else
+      {
+            m_phase = SessionPhase::Lobby;
+            m_tickTimer->stop();
+            ui->gameContentStack->setCurrentWidget(ui->boardPage);
+      }
 }
 
 GameScreen::~GameScreen()
@@ -305,8 +401,9 @@ bool GameScreen::eventFilter(QObject *watched, QEvent *event)
       }
       if (watched == ui->questionMediaLabel &&
           event->type() == QEvent::MouseButtonPress &&
-          m_phase == GamePhase::Answering && m_pointInputEnabled &&
-          !m_displayedPixmapRect.isEmpty())
+          (m_phase == GamePhase::Answering ||
+           m_phase == GamePhase::ForAllAnswering) &&
+          m_pointInputEnabled && !m_displayedPixmapRect.isEmpty())
       {
             const auto *mouseEvent = static_cast<QMouseEvent *>(event);
             const QPoint clickPosition = mouseEvent->position().toPoint();
@@ -327,20 +424,42 @@ bool GameScreen::eventFilter(QObject *watched, QEvent *event)
                   m_pointInputEnabled = false;
                   ui->questionMediaLabel->setCursor(Qt::ArrowCursor);
                   fitDisplayedPixmap();
-
-                  const double dx =
-                        (x - m_correctPoint->x()) *
-                        m_correctPointAspectRatio;
-                  const double dy = y - m_correctPoint->y();
-                  const double allowedDeviation =
-                        std::max(0.02, currentQuestion().answerDeviation);
-                  const bool isCorrect =
-                        std::hypot(dx, dy) <= allowedDeviation;
                   const QString submittedAnswer =
                         QStringLiteral("%1,%2")
                               .arg(x, 0, 'f', 6)
                               .arg(y, 0, 'f', 6);
-                  applyAnswerResult(isCorrect, submittedAnswer);
+                  if (m_mode != GameScreenMode::SinglePlayer)
+                  {
+                        AnswerSubmission submission;
+                        submission.answerType = AnswerType::Point;
+                        submission.point = QPointF(x, y);
+                        submission.hasPoint = true;
+                        submission.mode = m_forAllAnswering
+                                                ? QStringLiteral("ForAll")
+                                                : (m_networkQuestion.has_value() &&
+                                                           m_networkQuestion->type ==
+                                                                 QuestionType::SecretPublicPrice
+                                                         ? QStringLiteral("Secret")
+                                                         : QString());
+                        m_networkAnswerSubmitted = true;
+                        emitNetworkAnswer(submission);
+                  }
+                  else
+                  {
+                        if (!m_correctPoint.has_value())
+                        {
+                              return true;
+                        }
+                        const double dx =
+                              (x - m_correctPoint->x()) *
+                              m_correctPointAspectRatio;
+                        const double dy = y - m_correctPoint->y();
+                        const double allowedDeviation =
+                              std::max(0.02, currentQuestion().answerDeviation);
+                        const bool isCorrect =
+                              std::hypot(dx, dy) <= allowedDeviation;
+                        applyAnswerResult(isCorrect, submittedAnswer);
+                  }
                   return true;
             }
       }
@@ -388,7 +507,15 @@ void GameScreen::setProgressBarColor(GamePhase phase)
             break;
       case GamePhase::Answering:
       case GamePhase::ShowingAnswer:
+      case GamePhase::AppealVoting:
             color = QStringLiteral("#f44336");
+            break;
+      case GamePhase::Lobby:
+      case GamePhase::SecretTargetSelection:
+      case GamePhase::SecretWager:
+      case GamePhase::ForAllAnswering:
+      case GamePhase::Finished:
+            color = QStringLiteral("#9c27b0");
             break;
       }
       ui->progressBar->setStyleSheet(
@@ -398,6 +525,14 @@ void GameScreen::setProgressBarColor(GamePhase phase)
 
 void GameScreen::updateTimerProgress()
 {
+      if (m_mode != GameScreenMode::SinglePlayer)
+      {
+            m_tickTimer->stop();
+            m_progressAnimation->stop();
+            ui->progressBar->setValue(ui->progressBar->minimum());
+            setNetworkControls();
+            return;
+      }
       const qint64 remaining = std::max<qint64>(
             0, static_cast<qint64>(m_phaseDuration) -
                      m_globalTimer->elapsed());
@@ -429,6 +564,13 @@ void GameScreen::handlePhaseTimeout()
             break;
       case GamePhase::ShowingAnswer:
             returnToBoard();
+            break;
+      case GamePhase::ForAllAnswering:
+      case GamePhase::Lobby:
+      case GamePhase::SecretTargetSelection:
+      case GamePhase::SecretWager:
+      case GamePhase::AppealVoting:
+      case GamePhase::Finished:
             break;
       }
 }
@@ -637,6 +779,11 @@ void GameScreen::returnToBoard()
 
 const Question &GameScreen::currentQuestion() const
 {
+      if (m_mode != GameScreenMode::SinglePlayer &&
+          m_networkQuestion.has_value())
+      {
+            return *m_networkQuestion;
+      }
       return m_game.rounds.front()
             .themes[static_cast<std::size_t>(m_currentThemeIndex)]
             .questions[static_cast<std::size_t>(m_currentQuestionIndex)];
@@ -900,7 +1047,9 @@ void GameScreen::enableSelectAnswerInput()
 
 void GameScreen::enablePointAnswerInput()
 {
-      if (!m_correctPoint.has_value() || m_displayedPixmap.isNull())
+      if (m_displayedPixmap.isNull() ||
+          (m_mode == GameScreenMode::SinglePlayer &&
+           !m_correctPoint.has_value()))
       {
             qWarning() << "Point input cannot be enabled";
             return;
@@ -911,8 +1060,36 @@ void GameScreen::enablePointAnswerInput()
 
 void GameScreen::handleSubmittedAnswer(const QString &answer)
 {
-      if (m_phase != GamePhase::Answering || m_players.empty())
+      if ((m_phase != GamePhase::Answering &&
+           m_phase != GamePhase::ForAllAnswering) ||
+          (m_mode == GameScreenMode::SinglePlayer && m_players.empty()))
       {
+            return;
+      }
+      if (m_mode != GameScreenMode::SinglePlayer)
+      {
+            if (m_networkAnswerSubmitted)
+            {
+                  return;
+            }
+            AnswerSubmission submission;
+            submission.answerType = currentQuestion().answerType;
+            submission.mode = m_forAllAnswering
+                                    ? QStringLiteral("ForAll")
+                                    : (currentQuestion().type ==
+                                             QuestionType::SecretPublicPrice
+                                           ? QStringLiteral("Secret")
+                                           : QString());
+            if (submission.answerType == AnswerType::Select)
+            {
+                  submission.optionId = answer.trimmed();
+            }
+            else
+            {
+                  submission.answer = answer;
+            }
+            m_networkAnswerSubmitted = true;
+            emitNetworkAnswer(submission);
             return;
       }
 
@@ -955,6 +1132,25 @@ void GameScreen::handleSubmittedAnswer(const QString &answer)
 
 void GameScreen::handleAnswerDeclined()
 {
+      if (m_mode != GameScreenMode::SinglePlayer)
+      {
+            if ((m_phase == GamePhase::Answering ||
+                 m_phase == GamePhase::ForAllAnswering) &&
+                !m_networkAnswerSubmitted)
+            {
+                  AnswerSubmission submission;
+                  submission.answerType = currentQuestion().answerType;
+                  submission.mode = m_forAllAnswering
+                                          ? QStringLiteral("ForAll")
+                                          : (currentQuestion().type ==
+                                                   QuestionType::SecretPublicPrice
+                                                 ? QStringLiteral("Secret")
+                                                 : QString());
+                  m_networkAnswerSubmitted = true;
+                  emitNetworkAnswer(submission);
+            }
+            return;
+      }
       if (m_phase == GamePhase::Answering && !m_answerResultApplied)
       {
             applyAnswerResult(false, QString());
@@ -983,7 +1179,49 @@ void GameScreen::applyAnswerResult(bool isCorrect,
 
       player.balance -= currentQuestion().price;
       updateBalanceLabel(player);
-      emit incorrectAnswerSubmitted(0, submittedAnswer);
+      emit incorrectAnswerSubmitted(m_localPlayerId.isEmpty()
+                                          ? QStringLiteral("player-1")
+                                          : m_localPlayerId,
+                                    submittedAnswer);
+}
+
+void GameScreen::applyAuthoritativeAnswerResult(const AnswerResult &result)
+{
+      if (m_mode == GameScreenMode::SinglePlayer)
+      {
+            return;
+      }
+      m_submittedAnswer = result.submitted;
+      if (m_answerDialog != nullptr && m_answerDialog->isVisible())
+      {
+            m_answerDialog->reject();
+      }
+      if (result.playerId == m_localPlayerId)
+      {
+            m_networkAnswerSubmitted = true;
+      }
+      if (result.answerKind == AnswerType::Select &&
+          !result.submitted.isEmpty())
+      {
+            const QColor color(result.correct ? QStringLiteral("#2e7d32")
+                                             : QStringLiteral("#c62828"));
+            for (int row = 0; row < ui->answerOptionsTable->rowCount(); ++row)
+            {
+                  for (int column = 0;
+                       column < ui->answerOptionsTable->columnCount(); ++column)
+                  {
+                        QTableWidgetItem *item =
+                              ui->answerOptionsTable->item(row, column);
+                        if (item != nullptr &&
+                            item->data(Qt::UserRole).toString().compare(
+                                  result.submitted, Qt::CaseInsensitive) == 0)
+                        {
+                              item->setBackground(color);
+                              item->setForeground(Qt::white);
+                        }
+                  }
+            }
+      }
 }
 
 void GameScreen::populateAnswerOptions(const Question &question)
@@ -1090,6 +1328,7 @@ void GameScreen::resetAnswerInputState()
             m_answerDialog = nullptr;
       }
       m_submittedAnswer.clear();
+      m_networkAnswerSubmitted = false;
       clearAnswerOptions();
       ui->questionTextLabel->setMinimumHeight(0);
       ui->questionTextLabel->setMaximumHeight(QWIDGETSIZE_MAX);
@@ -1099,6 +1338,9 @@ void GameScreen::resetAnswerInputState()
       m_correctPointAspectRatio = 1.0;
       m_displayedPixmapRect = {};
       ui->questionMediaLabel->setCursor(Qt::ArrowCursor);
+      ui->appealButton->hide();
+      ui->appealYesButton->hide();
+      ui->appealNoButton->hide();
 }
 
 bool GameScreen::parsePointAnswer(const QString &value, QPointF *point,
@@ -1143,4 +1385,741 @@ bool GameScreen::parsePointAnswer(const QString &value, QPointF *point,
 void GameScreen::updateBalanceLabel(Player &player)
 {
       player.balanceLabel->setText(tr("Balance: %1").arg(player.balance));
+}
+
+void GameScreen::bindHost(MultiplayerHost *host)
+{
+      if (host == nullptr || m_mode == GameScreenMode::SinglePlayer)
+      {
+            return;
+      }
+      m_host = host;
+      m_mode = GameScreenMode::MultiplayerHost;
+      setLocalPlayerId(host->localPlayerId());
+      connectHostSignals(host);
+      connect(this, &GameScreen::questionPickRequested, this,
+              [this](int round, int theme, int question)
+              {
+                    m_host->onQuestionSelected(m_localPlayerId, round, theme,
+                                               question, nextLocalActionId());
+              });
+      connect(this, &GameScreen::reactionClaimRequested, this,
+              [this](unsigned int elapsed)
+              {
+                    m_host->onReactionClaim(m_localPlayerId,
+                                            m_networkQuestionSequence,
+                                            m_networkPhaseSequence,
+                                            nextLocalActionId(), elapsed);
+              });
+      connect(this, &GameScreen::answerSubmitted, this,
+              [this](const AnswerSubmission &submission)
+              {
+                    m_host->onAnswerSubmitted(m_localPlayerId,
+                                              m_networkQuestionSequence,
+                                              m_networkPhaseSequence,
+                                              nextLocalActionId(), submission);
+              });
+      connect(this, &GameScreen::passRequested, this,
+              [this]()
+              {
+                    m_host->onPass(m_localPlayerId, m_networkQuestionSequence,
+                                   m_networkPhaseSequence, nextLocalActionId());
+              });
+      connect(this, &GameScreen::secretTargetRequested, this,
+              [this](const PlayerId &target)
+              {
+                    m_host->onSecretTargetSelected(
+                          m_localPlayerId, target, m_networkQuestionSequence,
+                          nextLocalActionId());
+              });
+      connect(this, &GameScreen::secretWagerSubmitted, this,
+              [this](int amount)
+              {
+                    m_host->onSecretWagerSubmitted(
+                          m_localPlayerId, amount, m_networkQuestionSequence,
+                          nextLocalActionId());
+              });
+      connect(this, &GameScreen::pauseRequested, this,
+              [this](bool paused)
+              {
+                    m_host->onPauseRequested(m_localPlayerId, paused,
+                                             m_networkPhaseSequence,
+                                             nextLocalActionId());
+              });
+      connect(this, &GameScreen::appealRequested, this,
+              [this]()
+              {
+                    m_host->onAppealRequested(m_localPlayerId,
+                                              m_networkQuestionSequence,
+                                              nextLocalActionId());
+              });
+      connect(this, &GameScreen::appealVoteSubmitted, this,
+              [this](bool accepted)
+              {
+                    m_host->onAppealVote(m_localPlayerId, m_appealId, accepted,
+                                         nextLocalActionId());
+              });
+      applySnapshot(host->session()->snapshot());
+}
+
+void GameScreen::bindClient(MultiplayerClient *client)
+{
+      if (client == nullptr || m_mode == GameScreenMode::SinglePlayer)
+      {
+            return;
+      }
+      m_client = client;
+      m_mode = GameScreenMode::MultiplayerClient;
+      setLocalPlayerId(client->localPlayerId());
+      connectClientSignals(client);
+      connect(this, &GameScreen::questionPickRequested, this,
+              [this](int round, int theme, int question)
+              { m_client->selectQuestion(round, theme, question); });
+      connect(this, &GameScreen::reactionClaimRequested, this,
+              [this](unsigned int elapsed)
+              {
+                    m_client->submitReaction(m_networkQuestionSequence,
+                                             m_networkPhaseSequence, elapsed);
+              });
+      connect(this, &GameScreen::answerSubmitted, this,
+              [this](const AnswerSubmission &submission)
+              { m_client->submitAnswer(m_networkQuestionSequence,
+                                       m_networkPhaseSequence, submission); });
+      connect(this, &GameScreen::passRequested, this,
+              [this]()
+              { m_client->pass(m_networkQuestionSequence, m_networkPhaseSequence); });
+      connect(this, &GameScreen::secretTargetRequested, this,
+              [this](const PlayerId &target)
+              { m_client->selectSecretTarget(m_networkQuestionSequence, target); });
+      connect(this, &GameScreen::secretWagerSubmitted, this,
+              [this](int amount)
+              { m_client->submitSecretWager(m_networkQuestionSequence, amount); });
+      connect(this, &GameScreen::pauseRequested, this,
+              [this](bool paused)
+              { m_client->requestPause(m_networkPhaseSequence, paused); });
+      connect(this, &GameScreen::appealRequested, this,
+              [this]() { m_client->requestAppeal(m_networkQuestionSequence); });
+      connect(this, &GameScreen::appealVoteSubmitted, this,
+              [this](bool accepted) { m_client->voteAppeal(m_appealId, accepted); });
+}
+
+void GameScreen::setLocalPlayerId(const PlayerId &playerId)
+{
+      m_localPlayerId = playerId;
+      setNetworkControls();
+}
+
+void GameScreen::setPlayerStates(const QVector<PlayerState> &players)
+{
+      applyPlayers(players);
+}
+
+void GameScreen::setPicker(const PlayerId &playerId)
+{
+      m_pickerId = playerId;
+      for (PlayerState &state : m_networkPlayers)
+      {
+            state.isPicker = state.id == playerId;
+      }
+      setNetworkControls();
+      rebuildNetworkPlayerCards();
+}
+
+void GameScreen::setAnswerOwner(const PlayerId &playerId)
+{
+      applyAnswerOwner(playerId);
+}
+
+void GameScreen::setQuestionPermissions(bool canAnswer, bool canPass)
+{
+      m_canAnswer = canAnswer;
+      m_canPass = canPass;
+      setNetworkControls();
+}
+
+void GameScreen::setAppealPermission(bool allowed)
+{
+      m_canAppeal = allowed;
+      setNetworkControls();
+}
+
+void GameScreen::setPausePermission(bool allowed)
+{
+      m_canPause = allowed;
+      setNetworkControls();
+}
+
+void GameScreen::applyPlayers(const QVector<PlayerState> &players)
+{
+      if (m_mode == GameScreenMode::SinglePlayer)
+      {
+            return;
+      }
+      m_networkPlayers = players;
+      for (const PlayerState &state : players)
+      {
+            if (state.isPicker)
+            {
+                  m_pickerId = state.id;
+            }
+      }
+      rebuildNetworkPlayerCards();
+      setNetworkControls();
+}
+
+void GameScreen::applyBoard(const BoardState &board)
+{
+      if (m_mode == GameScreenMode::SinglePlayer)
+      {
+            return;
+      }
+      applyNetworkBoard(board);
+}
+
+void GameScreen::applyPhase(const PhaseState &phase)
+{
+      if (m_mode == GameScreenMode::SinglePlayer)
+      {
+            return;
+      }
+      m_networkPhase = phase;
+      m_phase = phase.phase;
+      m_networkPhaseSequence = phase.phaseSequence;
+      m_networkQuestionSequence = phase.questionSequence;
+      if (!phase.owner.isEmpty() &&
+          (phase.phase == SessionPhase::Answering ||
+           phase.phase == SessionPhase::SecretWager ||
+           phase.phase == SessionPhase::ReadingQuestion))
+      {
+            m_answerOwnerId = phase.owner;
+      }
+      m_secretTargetSelection = phase.phase == SessionPhase::SecretTargetSelection;
+      m_canPause = phase.phase == SessionPhase::PickingQuestion ||
+                   phase.phase == SessionPhase::ReadingQuestion;
+      if (phase.phase == SessionPhase::PickingQuestion)
+      {
+            m_pickerId = phase.owner;
+            ui->gameContentStack->setCurrentWidget(ui->boardPage);
+      }
+      else if (phase.phase != SessionPhase::Lobby &&
+               phase.phase != SessionPhase::SecretTargetSelection &&
+               phase.phase != SessionPhase::SecretWager)
+      {
+            ui->gameContentStack->setCurrentWidget(ui->questionPage);
+      }
+      if (phase.phase == SessionPhase::WaitingForReaction)
+      {
+            m_reactionElapsedTimer.restart();
+            startReactionFlash();
+      }
+      else
+      {
+            m_reactionElapsedTimer.invalidate();
+            stopReactionFlash();
+      }
+      m_forAllAnswering = phase.phase == SessionPhase::ForAllAnswering;
+      setNetworkPhaseTimer(phase);
+      setNetworkControls();
+}
+
+void GameScreen::applyQuestion(const QuestionPresentation &question)
+{
+      if (m_mode == GameScreenMode::SinglePlayer)
+      {
+            return;
+      }
+      applyNetworkQuestion(question);
+}
+
+void GameScreen::applyAnswerOwner(const PlayerId &playerId)
+{
+      m_answerOwnerId = playerId;
+      setNetworkControls();
+}
+
+void GameScreen::applyAnswerResult(const AnswerResult &result)
+{
+      applyAuthoritativeAnswerResult(result);
+      for (PlayerState &state : m_networkPlayers)
+      {
+            if (state.id == result.playerId)
+            {
+                  state.balance = result.balance;
+                  state.answeredIncorrectly = !result.correct;
+                  state.mayAppeal = !result.correct;
+                  break;
+            }
+      }
+      rebuildNetworkPlayerCards();
+      setNetworkControls();
+}
+
+void GameScreen::applyReveal(const AnswerReveal &reveal)
+{
+      if (m_mode == GameScreenMode::SinglePlayer || !m_networkQuestion.has_value())
+      {
+            return;
+      }
+      Question question = *m_networkQuestion;
+      question.rightAnswers.clear();
+      for (const QString &answer : reveal.rightAnswers)
+      {
+            question.rightAnswers.push_back(answer);
+      }
+      question.answerMediaType = reveal.answerMediaType;
+      question.answerMediaPath = reveal.answerMediaPath;
+      displayContent(reveal.rightAnswers.join(QLatin1Char('\n')),
+                     reveal.answerMediaType, reveal.answerMediaPath);
+      if (question.answerType == AnswerType::Select)
+      {
+            highlightSelectAnswers(question);
+      }
+      m_pickerId = reveal.nextPicker;
+      m_answerOwnerId = reveal.answerOwner;
+      m_pointInputEnabled = false;
+      setNetworkControls();
+}
+
+void GameScreen::applyForAllResult(const ForAllResult &result)
+{
+      for (const AnswerResult &answer : result.results)
+      {
+            if (answer.playerId == m_localPlayerId)
+            {
+                  applyAnswerResult(answer);
+                  break;
+            }
+      }
+}
+
+void GameScreen::applyAppeal(const AppealState &appeal)
+{
+      if (m_mode == GameScreenMode::SinglePlayer)
+      {
+            return;
+      }
+      m_appealId = appeal.appealId;
+      m_appealAppellant = appeal.appellant;
+      ui->appealButton->hide();
+      ui->appealYesButton->setVisible(appeal.appellant != m_localPlayerId);
+      ui->appealNoButton->setVisible(appeal.appellant != m_localPlayerId);
+      setNetworkControls();
+}
+
+void GameScreen::applyAppealResult(const AppealResult &)
+{
+      ui->appealButton->hide();
+      ui->appealYesButton->hide();
+      ui->appealNoButton->hide();
+}
+
+void GameScreen::applyPause(bool paused, SessionPhase phase,
+                            unsigned int remainingMs)
+{
+      if (m_mode == GameScreenMode::SinglePlayer)
+      {
+            return;
+      }
+      m_networkPaused = paused;
+      if (paused)
+      {
+            m_tickTimer->stop();
+            m_progressAnimation->stop();
+            ui->gameContentStack->setCurrentWidget(ui->pausePage);
+      }
+      else
+      {
+            PhaseState state = m_networkPhase;
+            state.phase = phase;
+            state.remainingMs = remainingMs;
+            state.durationMs = remainingMs;
+            applyPhase(state);
+      }
+      setNetworkControls();
+}
+
+void GameScreen::applySnapshot(const SessionSnapshot &snapshot)
+{
+      if (m_mode == GameScreenMode::SinglePlayer)
+      {
+            return;
+      }
+      m_networkQuestionSequence = snapshot.phase.questionSequence;
+      m_networkPhaseSequence = snapshot.phase.phaseSequence;
+      m_pickerId = snapshot.currentPicker;
+      m_answerOwnerId = snapshot.answerOwner;
+      applyPlayers(snapshot.players);
+      applyBoard(snapshot.board);
+      if (snapshot.question.has_value())
+      {
+            applyQuestion(*snapshot.question);
+      }
+      applyPhase(snapshot.phase);
+      if (snapshot.reveal.has_value())
+      {
+            applyReveal(*snapshot.reveal);
+      }
+      if (snapshot.appeal.has_value())
+      {
+            applyAppeal(*snapshot.appeal);
+      }
+      if (snapshot.paused)
+      {
+            applyPause(true, snapshot.phase.phase, snapshot.phase.remainingMs);
+      }
+}
+
+void GameScreen::applySecretTargets(const QVector<PlayerState> &targets)
+{
+      if (m_mode == GameScreenMode::SinglePlayer)
+      {
+            return;
+      }
+      m_secretTargetSelection = true;
+      QSet<PlayerId> targetIds;
+      for (const PlayerState &target : targets)
+      {
+            targetIds.insert(target.id);
+      }
+      for (PlayerState &state : m_networkPlayers)
+      {
+            state.isPicker = targetIds.contains(state.id);
+      }
+      rebuildNetworkPlayerCards();
+      setNetworkControls();
+}
+
+void GameScreen::applyWagerPrompt(const SecretWagerParameters &parameters)
+{
+      if (m_mode == GameScreenMode::SinglePlayer)
+      {
+            return;
+      }
+      auto *dialog = new QInputDialog(this);
+      dialog->setAttribute(Qt::WA_DeleteOnClose);
+      dialog->setInputMode(QInputDialog::IntInput);
+      dialog->setWindowTitle(tr("Secret wager"));
+      const QString label = parameters.theme.isEmpty()
+                                  ? tr("Choose a wager:")
+                                  : tr("%1\nChoose a wager:").arg(parameters.theme);
+      dialog->setLabelText(label);
+      dialog->setIntRange(parameters.minimum, parameters.maximum);
+      dialog->setIntStep(parameters.step > 0 ? parameters.step : 1);
+      dialog->setIntValue(parameters.minimum);
+      connect(dialog, &QInputDialog::intValueSelected, this,
+              [this](int amount) { emit secretWagerSubmitted(amount); });
+      dialog->open();
+}
+
+void GameScreen::applyNetworkQuestion(
+      const QuestionPresentation &presentation)
+{
+      m_networkQuestion = Question{};
+      m_networkQuestion->price = presentation.price;
+      m_networkQuestion->type = presentation.questionType;
+      m_networkQuestion->answerType = presentation.answerType;
+      m_networkQuestion->answerDuration = presentation.answerDurationMs / 1000U;
+      m_networkQuestion->text = presentation.text;
+      m_networkQuestion->mediaType = presentation.mediaType;
+      m_networkQuestion->mediaPath = presentation.mediaPath;
+      m_networkQuestion->answerOptions.assign(presentation.answerOptions.cbegin(),
+                                              presentation.answerOptions.cend());
+      m_networkQuestionSequence = presentation.questionSequence;
+      m_currentThemeIndex = presentation.theme;
+      m_currentQuestionIndex = presentation.question;
+      m_answerOwnerId = presentation.answerOwner;
+      m_secretTargetSelection = false;
+      resetAnswerInputState();
+      displayContent(presentation.text, presentation.mediaType,
+                     presentation.mediaPath);
+      if (presentation.answerType == AnswerType::Select &&
+          presentation.answerOptions.size() >= 2)
+      {
+            populateAnswerOptions(*m_networkQuestion);
+      }
+      ui->gameContentStack->setCurrentWidget(ui->questionPage);
+      setNetworkControls();
+}
+
+void GameScreen::applyNetworkBoard(const BoardState &board)
+{
+      m_networkBoard = board;
+      QSet<QString> used;
+      for (const BoardCell &cell : board.cells)
+      {
+            if (cell.used)
+            {
+                  used.insert(QStringLiteral("%1:%2:%3")
+                                    .arg(cell.round)
+                                    .arg(cell.theme)
+                                    .arg(cell.question));
+            }
+      }
+      if (m_game.rounds.empty())
+      {
+            return;
+      }
+      const Round &round = m_game.rounds.front();
+      for (int theme = 0; theme < static_cast<int>(round.themes.size()); ++theme)
+      {
+            const Theme &currentTheme = round.themes[static_cast<std::size_t>(theme)];
+            for (int question = 0;
+                 question < static_cast<int>(currentTheme.questions.size());
+                 ++question)
+            {
+                  auto *button = qobject_cast<QPushButton *>(
+                        ui->tableWidget->cellWidget(theme, question));
+                  if (button == nullptr)
+                  {
+                        continue;
+                  }
+                  const bool isUsed = used.contains(
+                        QStringLiteral("0:%1:%2").arg(theme).arg(question));
+                  button->setText(isUsed
+                                        ? QString()
+                                        : QString::number(
+                                              currentTheme.questions[static_cast<std::size_t>(
+                                                    question)]
+                                                    .price));
+                  button->setEnabled(!isUsed &&
+                                     m_phase == SessionPhase::PickingQuestion &&
+                                     m_pickerId == m_localPlayerId);
+            }
+      }
+}
+
+void GameScreen::rebuildNetworkPlayerCards()
+{
+      if (m_mode == GameScreenMode::SinglePlayer)
+      {
+            return;
+      }
+      clearNetworkPlayerCards();
+      const QPixmap fallback(QStringLiteral("Images/default.jpg"));
+      for (const PlayerState &state : m_networkPlayers)
+      {
+            auto *layout = new QVBoxLayout;
+            auto *avatar = new QPushButton;
+            QPixmap picture = fallback;
+            if (!state.profilePng.isEmpty())
+            {
+                  QPixmap remote;
+                  if (remote.loadFromData(state.profilePng))
+                  {
+                        picture = remote;
+                  }
+                  else
+                  {
+                        qWarning() << "Unable to load remote profile picture"
+                                   << state.id;
+                  }
+            }
+            avatar->setIcon(QIcon(picture));
+            avatar->setIconSize(QSize(100, 100));
+            avatar->setFixedSize(110, 110);
+            avatar->setEnabled(m_secretTargetSelection && state.isPicker &&
+                               state.id != m_localPlayerId);
+            connect(avatar, &QPushButton::clicked, this,
+                    [this, id = state.id]() { emit secretTargetRequested(id); });
+            auto *name = new QLabel(state.nickname.isEmpty()
+                                          ? tr("Unnamed")
+                                          : state.nickname);
+            auto *balance = new QLabel(tr("Balance: %1").arg(state.balance));
+            layout->addWidget(avatar);
+            layout->addWidget(name);
+            layout->addWidget(balance);
+            ui->PlayersLayout->addLayout(layout);
+      }
+}
+
+void GameScreen::clearNetworkPlayerCards()
+{
+      deleteLayoutItems(ui->PlayersLayout);
+      m_players.clear();
+}
+
+void GameScreen::setNetworkControls()
+{
+      if (m_mode == GameScreenMode::SinglePlayer)
+      {
+            return;
+      }
+      const PlayerState *local = nullptr;
+      for (const PlayerState &state : m_networkPlayers)
+      {
+            if (state.id == m_localPlayerId)
+            {
+                  local = &state;
+                  break;
+            }
+      }
+      const bool eligible = local != nullptr && local->connected &&
+                            !local->hasPassed && !local->answeredIncorrectly;
+      m_canAppeal = local != nullptr && local->mayAppeal;
+      if (m_phase == SessionPhase::WaitingForReaction)
+      {
+            m_canAnswer = eligible;
+            m_canPass = eligible;
+      }
+      else if (m_phase == SessionPhase::Answering)
+      {
+            m_canAnswer = eligible && m_answerOwnerId == m_localPlayerId;
+            m_canPass = eligible && m_answerOwnerId != m_localPlayerId;
+      }
+      else if (m_phase == SessionPhase::ForAllAnswering)
+      {
+            m_canAnswer = eligible && (local == nullptr || !local->hasAnsweredForAll);
+            m_canPass = m_canAnswer;
+      }
+      else
+      {
+            m_canAnswer = false;
+            m_canPass = false;
+      }
+      ui->AnswerBytton->setEnabled(m_canAnswer && !m_networkAnswerSubmitted &&
+                                   !m_networkPaused);
+      ui->passButton->setEnabled(m_canPass && !m_networkPaused);
+      ui->pushButton_3->setEnabled(m_canPause && !m_networkPaused);
+      ui->pushButton_5->setEnabled(m_canPause && m_networkPaused);
+      ui->appealButton->setVisible(m_canAppeal &&
+                                   m_phase == SessionPhase::ShowingAnswer &&
+                                   !m_networkPaused);
+      if (m_networkPaused)
+      {
+            ui->AnswerBytton->setEnabled(false);
+            ui->passButton->setEnabled(false);
+      }
+      if (m_phase == SessionPhase::PickingQuestion)
+      {
+            applyNetworkBoard(m_networkBoard);
+      }
+}
+
+void GameScreen::connectHostSignals(MultiplayerHost *host)
+{
+      GameSession *session = host->session();
+      connect(session, &GameSession::playersChanged, this,
+              &GameScreen::applyPlayers);
+      connect(session, &GameSession::boardChanged, this,
+              &GameScreen::applyBoard);
+      connect(session, &GameSession::phaseStarted, this,
+              &GameScreen::applyPhase);
+      connect(session, &GameSession::questionStarted, this,
+              &GameScreen::applyQuestion);
+      connect(session, &GameSession::reactionOpened, this,
+              [this](const ReactionState &) { m_reactionElapsedTimer.restart(); });
+      connect(session, &GameSession::answerOwnerChanged, this,
+              &GameScreen::applyAnswerOwner);
+      connect(session, &GameSession::answerResult, this,
+              [this](const AnswerResult &result)
+              { applyAnswerResult(result); });
+      connect(session, &GameSession::answerRevealed, this,
+              &GameScreen::applyReveal);
+      connect(session, &GameSession::forAllResult, this,
+              &GameScreen::applyForAllResult);
+      connect(session, &GameSession::appealOpened, this,
+              &GameScreen::applyAppeal);
+      connect(session, &GameSession::appealFinished, this,
+              &GameScreen::applyAppealResult);
+      connect(session, &GameSession::pickerChanged, this,
+              &GameScreen::setPicker);
+      connect(session, &GameSession::secretTargetsReady, this,
+              [this](quint64, const QVector<PlayerState> &targets)
+              { applySecretTargets(targets); });
+      connect(session, &GameSession::secretWagerPrompt, this,
+              [this](const PlayerId &target,
+                     const SecretWagerParameters &parameters)
+              {
+                    if (target == m_localPlayerId)
+                    {
+                          applyWagerPrompt(parameters);
+                    }
+              });
+      connect(session, &GameSession::pauseChanged, this,
+              [this](bool paused, const PhaseState &state)
+              { applyPause(paused, state.phase, state.remainingMs); });
+}
+
+void GameScreen::connectClientSignals(MultiplayerClient *client)
+{
+      connect(client, &MultiplayerClient::connected, this,
+              [this](const PlayerId &id, bool) { setLocalPlayerId(id); });
+      connect(client, &MultiplayerClient::lobbyChanged, this,
+              &GameScreen::applyPlayers);
+      connect(client, &MultiplayerClient::phaseReceived, this,
+              &GameScreen::applyPhase);
+      connect(client, &MultiplayerClient::boardReceived, this,
+              &GameScreen::applyBoard);
+      connect(client, &MultiplayerClient::questionReceived, this,
+              &GameScreen::applyQuestion);
+      connect(client, &MultiplayerClient::answerOwnerReceived, this,
+              [this](const PlayerId &id, unsigned int) { applyAnswerOwner(id); });
+      connect(client, &MultiplayerClient::pickerReceived, this,
+              &GameScreen::setPicker);
+      connect(client, &MultiplayerClient::answerResultReceived, this,
+              [this](const AnswerResult &result)
+              { applyAnswerResult(result); });
+      connect(client, &MultiplayerClient::forAllResultReceived, this,
+              &GameScreen::applyForAllResult);
+      connect(client, &MultiplayerClient::revealReceived, this,
+              &GameScreen::applyReveal);
+      connect(client, &MultiplayerClient::appealReceived, this,
+              &GameScreen::applyAppeal);
+      connect(client, &MultiplayerClient::appealResultReceived, this,
+              &GameScreen::applyAppealResult);
+      connect(client, &MultiplayerClient::pauseReceived, this,
+              &GameScreen::applyPause);
+      connect(client, &MultiplayerClient::secretTargetListReceived, this,
+              &GameScreen::applySecretTargets);
+      connect(client, &MultiplayerClient::secretWagerPromptReceived, this,
+              &GameScreen::applyWagerPrompt);
+      connect(client, &MultiplayerClient::snapshotApplied, this,
+              &GameScreen::applySnapshot);
+}
+
+void GameScreen::emitNetworkAnswer(const AnswerSubmission &submission)
+{
+      emit answerSubmitted(submission);
+}
+
+quint64 GameScreen::nextLocalActionId() { return m_localActionId++; }
+
+void GameScreen::setNetworkPhaseTimer(const PhaseState &phase)
+{
+      if (phase.phase != SessionPhase::WaitingForReaction)
+      {
+            stopReactionFlash();
+      }
+      m_phaseDuration = phase.remainingMs;
+      m_globalTimer->restart();
+      m_progressAnimation->stop();
+      m_progressAnimation->setStartValue(ui->progressBar->maximum());
+      m_progressAnimation->setEndValue(ui->progressBar->minimum());
+      m_progressAnimation->setDuration(static_cast<int>(phase.remainingMs));
+      if (phase.remainingMs > 0)
+      {
+            m_progressAnimation->start();
+      }
+      m_tickTimer->stop();
+}
+
+void GameScreen::deleteLayoutItems(QLayout *layout)
+{
+      if (layout == nullptr)
+      {
+            return;
+      }
+      while (QLayoutItem *item = layout->takeAt(0))
+      {
+            if (QWidget *widget = item->widget())
+            {
+                  delete widget;
+            }
+            if (QLayout *child = item->layout())
+            {
+                  deleteLayoutItems(child);
+                  delete child;
+            }
+            delete item;
+      }
 }

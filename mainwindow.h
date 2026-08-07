@@ -2,6 +2,8 @@
 #define MAINWINDOW_H
 
 #include "gamescreen.h"
+#include "multiplayerhostscreen.h"
+#include "multiplayerjoinscreen.h"
 #include "singleplayerscreen.h"
 #include <QMainWindow>
 #include <QStackedWidget>
@@ -24,8 +26,10 @@ class MainWindow : public QMainWindow
     private:
       Ui::MainWindow *ui;
       QStackedWidget *stack;
-      SinglePlayerScreen *singleScreen;
-      GameScreen *gameScreen;
+      SinglePlayerScreen *singleScreen{};
+      GameScreen *gameScreen{};
+      MultiplayerHostScreen *hostScreen{};
+      MultiplayerJoinScreen *joinScreen{};
       QMessageBox *exitPopup;
 
     private slots:
@@ -37,6 +41,9 @@ class MainWindow : public QMainWindow
                           int questionPickDuration, int answerWaitDuration);
       void loadSettings();
       void loadMultiplayer();
+      void loadJoinSettings();
+      void loadHostGame(MultiplayerHost *host, const QString &packPath);
+      void loadClientGame(MultiplayerClient *client, const QString &packPath);
       void showExitPopup();
 };
 

@@ -246,6 +246,26 @@ li.checked::marker { content: &quot;\2612&quot;; }
         </item>
        </layout>
       </widget>
+      <widget class="QWidget" name="pausePage">
+       <layout class="QVBoxLayout" name="pausePageLayout">
+        <item>
+         <widget class="QLabel" name="pauseLabel">
+          <property name="font">
+           <font>
+            <pointsize>36</pointsize>
+            <bold>true</bold>
+           </font>
+          </property>
+          <property name="text">
+           <string>PAUSE</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignCenter</set>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
      </widget>
     </widget>
    </item>
@@ -275,6 +295,27 @@ li.checked::marker { content: &quot;\2612&quot;; }
       <widget class="QPushButton" name="AnswerBytton">
        <property name="text">
         <string>Answer</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="appealButton">
+       <property name="text">
+        <string>Appeal</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="appealYesButton">
+       <property name="text">
+        <string>Yes</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="appealNoButton">
+       <property name="text">
+        <string>No</string>
        </property>
       </widget>
      </item>

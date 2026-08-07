@@ -2118,7 +2118,6 @@ void GameScreen::deleteLayoutItems(QLayout *layout)
             if (QLayout *child = item->layout())
             {
                   deleteLayoutItems(child);
-                  delete child;
             }
             delete item;
       }

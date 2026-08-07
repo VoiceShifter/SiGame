@@ -76,7 +76,7 @@ declare -a CLIENT_NAMES=()
 declare -A CLIENT_IN CLIENT_OUT CLIENT_PID CLIENT_TOKEN CLIENT_ID CLIENT_SESSION
 # shellcheck disable=SC2034
 # CLIENT_ACTION is read and written by next_action.
-declare -A CLIENT_ACTION CLIENT_LAST_LINE
+declare -A CLIENT_ACTION CLIENT_LAST_LINE CLIENT_PENDING
 
 usage() {
       cat <<EOF
@@ -272,6 +272,13 @@ validate_configuration() {
       PACK_HASH=${PACK_HASH,,}
 }
 
+# Drain large profile frames outside Bash. Bash's timed read handles long lines
+# one byte at a time, which made multi-megabyte profile transfers appear hung
+# and flooded the terminal with base64 data.
+filter_protocol_output() {
+      LC_ALL=C sed -u -E '/^PROFILE_CHUNK[[:space:]]/d'
+}
+
 # Start one persistent curl/telnet client. Named coprocesses are used instead
 # of FIFOs so a failed connection cannot block the parent while opening a
 # writer. The output descriptor is consumed line-by-line by wait_for().
@@ -285,23 +292,32 @@ start_client() {
       local error_file="$TMP_DIR/${name}.curl.stderr"
       local input_fd
       local output_fd
+      local stable_input_fd
+      local stable_output_fd
       local process_id
 
       printf -v quoted_url '%q' "$url"
       printf -v quoted_error '%q' "$error_file"
-      eval "coproc $coprocess_name { curl --silent --show-error --no-buffer --connect-timeout $CONNECT_TIMEOUT $quoted_url 2>$quoted_error; }"
+      eval "coproc $coprocess_name { curl --silent --show-error --no-buffer --connect-timeout $CONNECT_TIMEOUT $quoted_url 2>$quoted_error | filter_protocol_output; }"
       eval "input_fd=\${${coprocess_name}[1]}"
       eval "output_fd=\${${coprocess_name}[0]}"
       eval "process_id=\${${coprocess_name}_PID}"
+      # Bash may close coprocess descriptors in command substitutions. Keep
+      # stable duplicates for the lifetime of the client.
+      eval "exec {stable_input_fd}>&$input_fd"
+      eval "exec {stable_output_fd}<&$output_fd"
+      eval "exec ${input_fd}>&-"
+      eval "exec ${output_fd}<&-"
 
-      CLIENT_IN["$name"]=$input_fd
-      CLIENT_OUT["$name"]=$output_fd
+      CLIENT_IN["$name"]=$stable_input_fd
+      CLIENT_OUT["$name"]=$stable_output_fd
       CLIENT_PID["$name"]=$process_id
       CLIENT_TOKEN["$name"]=$token
       CLIENT_ID["$name"]=""
       CLIENT_SESSION["$name"]=""
       CLIENT_ACTION["$name"]=0
       CLIENT_LAST_LINE["$name"]=""
+      CLIENT_PENDING["$name"]=""
       local known_name
       for known_name in "${CLIENT_NAMES[@]-}"; do
             if [[ "$known_name" == "$name" ]]; then
@@ -377,26 +393,66 @@ next_action() {
       printf '%s' "$value"
 }
 
-# Wait for a line matching an extended regular expression. All received lines
-# are printed, making this useful as a curl protocol trace as well as a test.
+pop_pending_match() {
+      local name=$1
+      local expression=$2
+      local pending=${CLIENT_PENDING[$name]-}
+      local remaining=""
+      local line
+      local matched=0
+
+      [[ -n "$pending" ]] || return 1
+      while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
+            if ((matched == 0)) && [[ "$line" =~ $expression ]]; then
+                  MATCH_LINE=$line
+                  matched=1
+            else
+                  remaining+="$line"$'\n'
+            fi
+      done <<<"$pending"
+      CLIENT_PENDING["$name"]=$remaining
+      ((matched == 1))
+}
+
+# Wait for a line matching an extended regular expression. Profile chunk
+# payloads have already been consumed and omitted by filter_protocol_output.
+# Unmatched events are retained because one host operation can enqueue several
+# state changes before the script starts waiting for the next one.
 wait_for() {
       local name=$1
       local expression=$2
       local timeout_seconds=$3
+      local input_fd=${CLIENT_IN[$name]}
       local output_fd=${CLIENT_OUT[$name]}
       local process_id=${CLIENT_PID[$name]}
       local line
-      local elapsed=0
+      local partial=""
+      local deadline=$((SECONDS + timeout_seconds))
 
       MATCH_LINE=""
-      while ((elapsed < timeout_seconds * 10)); do
-            if IFS= read -r -t 0.1 line <&"$output_fd"; then
+      if pop_pending_match "$name" "$expression"; then
+            return 0
+      fi
+      while ((SECONDS < deadline)); do
+            line=""
+            if IFS= read -r -t 0.01 line <&"$output_fd"; then
+                  line="${partial}${line}"
+                  partial=""
                   CLIENT_LAST_LINE["$name"]=$line
+                  if [[ "$line" == PING\ * ]]; then
+                        local ping_id=${line#*pingId=}
+                        ping_id=${ping_id%% *}
+                        printf 'PONG pingId=%s\n' "$ping_id" >&"$input_fd" ||
+                              return 1
+                        continue
+                  fi
                   log "$name <- $line"
                   if [[ "$line" =~ $expression ]]; then
                         MATCH_LINE=$line
                         return 0
                   fi
+                  CLIENT_PENDING["$name"]+="$line"$'\n'
             elif ! kill -0 "$process_id" 2>/dev/null; then
                   local error_file="$TMP_DIR/${name}.curl.stderr"
                   if [[ -s "$error_file" ]]; then
@@ -404,8 +460,14 @@ wait_for() {
                   fi
                   warn "$name curl process exited while waiting for: $expression"
                   return 1
+            else
+                  partial+=$line
+                  # curl's telnet transport can stop polling the socket while
+                  # stdin is idle after a large response. A harmless PONG wakes
+                  # it so profile data continues draining from the host.
+                  printf 'PONG pingId=0\n' >&"$input_fd" ||
+                        return 1
             fi
-            ((elapsed += 1))
       done
       warn "$name timed out waiting for: $expression"
       return 1
@@ -447,9 +509,11 @@ handshake_client() {
 check_protocol_error() {
       local name=$1
       local action
+      local error_wait=$((WAIT_SECONDS * 4))
+      ((error_wait >= 30)) || error_wait=30
       action=$(next_action "$name")
       send_line "$name" "UNKNOWN_COMMAND requestId=bad-${action}"
-      wait_for "$name" '^ERROR[[:space:]].*requestId=bad-' "$WAIT_SECONDS" ||
+      wait_for "$name" '^ERROR[[:space:]].*requestId=bad-' "$error_wait" ||
             fail "$name did not receive an ERROR for an unknown command"
 }
 
@@ -661,6 +725,8 @@ main() {
 
       parse_options "$@"
       require_command curl
+      require_command awk
+      require_command sed
       require_command timeout
       require_command find
       require_command stat

@@ -453,7 +453,8 @@ void MultiplayerHost::handleFrame(Peer &peer,
       if (!MultiplayerProtocol::isKnownCommand(frame.command))
       {
             sendError(peer, QStringLiteral("BAD_FRAME"),
-                      QStringLiteral("Unknown command"));
+                      QStringLiteral("Unknown command"),
+                      frame.fields.value(QStringLiteral("requestId")));
             return;
       }
       if (!peer.ready)

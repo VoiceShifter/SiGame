@@ -8,6 +8,7 @@
 #include <QElapsedTimer>
 #include <QHash>
 #include <QObject>
+#include <QPair>
 #include <QSet>
 #include <QTimer>
 
@@ -43,7 +44,11 @@ class GameSession : public QObject
       PlayerId currentPicker() const { return m_currentPicker; }
       PlayerId answerOwner() const { return m_answerOwner; }
       PlayerId secretTarget() const { return m_secretTarget; }
+      int roundIndex() const { return m_boardRound; }
       SecretWagerParameters secretWagerParameters() const;
+      SecretWagerParameters finalWagerParameters(
+            const PlayerId &playerId) const;
+      bool isFinalWagerPending(const PlayerId &playerId) const;
       bool isPaused() const { return m_paused; }
       unsigned int remainingMs() const;
       BoardState boardState() const;
@@ -51,6 +56,7 @@ class GameSession : public QObject
       std::optional<QuestionPresentation> currentPresentation() const;
       QString secretSelectionMode() const;
       bool hasActiveQuestion() const;
+      bool skipToRound(int roundIndex);
       void setReactionDecisionWindowMs(unsigned int durationMs);
 
     public slots:
@@ -102,6 +108,7 @@ class GameSession : public QObject
       void forAllResult(const ForAllResult &result);
       void appealOpened(const AppealState &state);
       void appealFinished(const AppealResult &result);
+      void roundStarted(int roundIndex, PlayerId picker);
       void pickerChanged(PlayerId playerId);
       void playersChanged(const QVector<PlayerState> &players);
       void snapshotReady(const SessionSnapshot &snapshot);
@@ -146,6 +153,11 @@ class GameSession : public QObject
       void handleTimeout();
       void beginPicking();
       void selectRandomQuestion();
+      void eliminateFinalTheme(const PlayerId &playerId, int theme,
+                               quint64 actionId);
+      void beginFinalWagering(int theme, int question);
+      void startFinalQuestion();
+      void advanceRoundOrFinish();
       void beginReaction();
       void decideReactionWinner();
       void beginForAllAnswering();
@@ -162,6 +174,12 @@ class GameSession : public QObject
       void resetQuestionState();
       void chooseNextPickerIfNeeded();
       PlayerId chooseRandomConnectedPlayer() const;
+      PlayerId nextConnectedPlayer(const PlayerId &playerId) const;
+      bool currentRoundIsFinal() const;
+      bool currentQuestionIsFinal() const;
+      int remainingFinalThemeCount() const;
+      QPair<int, int> remainingFinalQuestion() const;
+      int finalWagerLimit(const PlayerId &playerId) const;
       Question *currentQuestion();
       const Question *currentQuestion() const;
       QuestionPresentation makePresentation() const;
@@ -206,6 +224,8 @@ class GameSession : public QObject
       QHash<PlayerId, ReactionClaim> m_reactionClaims;
       QSet<PlayerId> m_forAllExpected;
       QHash<PlayerId, ForAllAttempt> m_forAllAttempts;
+      QSet<PlayerId> m_finalWagerExpected;
+      QHash<PlayerId, int> m_finalWagers;
       QHash<PlayerId, int> m_wrongAmounts;
       QHash<PlayerId, AnswerSubmission> m_answerDrafts;
       QHash<PlayerId, QString> m_submittedAnswers;
@@ -219,10 +239,13 @@ class GameSession : public QObject
       PlayerId m_answerOwner;
       PlayerId m_nextPicker;
       PlayerId m_secretTarget;
+      int m_boardRound{};
+      int m_announcedRound{-1};
       int m_currentRound{-1};
       int m_currentTheme{-1};
       int m_currentQuestion{-1};
       int m_secretWager{};
+      bool m_finalQuestionActive{};
 };
 
 #endif // GAMESESSION_H

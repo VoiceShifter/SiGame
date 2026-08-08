@@ -3,7 +3,6 @@
 #include "multiplayerprotocol.h"
 #include "packmanifest.h"
 #include "pingworker.h"
-
 #include <QCryptographicHash>
 #include <QImage>
 #include <QLocale>
@@ -18,6 +17,7 @@
 
 namespace
 {
+
 QString stringValue(quint64 value) { return QString::number(value); }
 QString stringValue(qint64 value) { return QString::number(value); }
 QString stringValue(unsigned int value) { return QString::number(value); }
@@ -39,13 +39,13 @@ QString usedCellsValue(const BoardState &state)
 }
 
 bool parseIntField(const QMap<QString, QString> &fields, const QString &name,
-                  int *value)
+                   int *value)
 {
       if (value == nullptr || !fields.contains(name))
       {
             return false;
       }
-      bool ok = false;
+      bool ok          = false;
       const int parsed = fields.value(name).toInt(&ok);
       if (!ok)
       {
@@ -56,7 +56,7 @@ bool parseIntField(const QMap<QString, QString> &fields, const QString &name,
 }
 
 bool parseUIntField(const QMap<QString, QString> &fields, const QString &name,
-                   quint64 *value)
+                    quint64 *value)
 {
       QString error;
       return MultiplayerProtocol::parseUnsigned(fields, name, value, &error);
@@ -105,26 +105,30 @@ MultiplayerHost::MultiplayerHost(const GameConfig &config, const Game &game,
                                  const PlayerIdentity &identity,
                                  QObject *parent)
       : QObject(parent), m_config(config), m_game(game), m_identity(identity),
-        m_localPlayerId(QStringLiteral("player-host-%1")
-                              .arg(identity.token.left(12))),
+        m_localPlayerId(
+              QStringLiteral("player-host-%1").arg(identity.token.left(12))),
         m_session(new GameSession(game, config, this)),
         m_server(new QTcpServer(this))
 {
       if (m_identity.token.isEmpty())
       {
-            m_identity = PlayerIdentity::load();
+            m_identity      = PlayerIdentity::load();
             m_localPlayerId = QStringLiteral("player-host-%1")
                                     .arg(m_identity.token.left(12));
       }
       m_identity.profilePng = normalizedProfilePng(m_identity.profilePng);
       PlayerState host;
-      host.id = m_localPlayerId;
-      host.token = m_identity.token;
-      host.nickname = m_identity.nickname;
+      host.id         = m_localPlayerId;
+      host.token      = m_identity.token;
+      host.nickname   = m_identity.nickname;
       host.profilePng = m_identity.profilePng;
-      host.connected = true;
-      host.ready = true;
+      host.connected  = true;
+      host.ready      = true;
       m_session->addPlayer(host);
+      if (!m_game.rounds.empty())
+      {
+            m_session->skipToRound(static_cast<int>(m_game.rounds.size()) - 1);
+      }
       connect(m_server, &QTcpServer::newConnection, this,
               &MultiplayerHost::acceptPendingConnections);
       m_syncTimer.setInterval(500);
@@ -162,11 +166,13 @@ void MultiplayerHost::stop()
 {
       if (m_started)
       {
-            broadcast(QStringLiteral("GAME_ABORTED"),
-                      {{QStringLiteral("sessionId"), m_session->sessionId()},
-                       {QStringLiteral("reason"), QStringLiteral("host-ended")}});
+            broadcast(
+                  QStringLiteral("GAME_ABORTED"),
+                  {{QStringLiteral("sessionId"), m_session->sessionId()},
+                   {QStringLiteral("reason"), QStringLiteral("host-ended")}});
       }
-      for (auto iterator = m_peers.begin(); iterator != m_peers.end(); ++iterator)
+      for (auto iterator = m_peers.begin(); iterator != m_peers.end();
+           ++iterator)
       {
             if (iterator.value().connection != nullptr)
             {
@@ -196,6 +202,11 @@ void MultiplayerHost::startGame()
       m_syncTimer.start();
 }
 
+bool MultiplayerHost::skipToRound(int roundIndex)
+{
+      return m_session->skipToRound(roundIndex);
+}
+
 bool MultiplayerHost::isListening() const
 {
       return m_server != nullptr && m_server->isListening();
@@ -211,15 +222,15 @@ void MultiplayerHost::requestSnapshot(PlayerId playerId)
 }
 
 void MultiplayerHost::onReactionClaim(PlayerId playerId,
-                                       quint64 questionSequence,
-                                       quint64 phaseSequence, quint64 actionId,
-                                       unsigned int elapsedMs)
+                                      quint64 questionSequence,
+                                      quint64 phaseSequence, quint64 actionId,
+                                      unsigned int elapsedMs)
 {
       unsigned int effectiveElapsed = elapsedMs;
       if (playerId == m_localPlayerId)
       {
             double totalOneWay = 0.0;
-            int count = 0;
+            int count          = 0;
             for (auto iterator = m_remoteRtt.cbegin();
                  iterator != m_remoteRtt.cend(); ++iterator)
             {
@@ -237,34 +248,34 @@ void MultiplayerHost::onReactionClaim(PlayerId playerId,
       }
       if (playerId == m_localPlayerId)
       {
-            m_session->submitReaction(playerId, questionSequence,
-                                      phaseSequence, actionId, elapsedMs,
-                                      effectiveElapsed);
+            m_session->submitReaction(playerId, questionSequence, phaseSequence,
+                                      actionId, elapsedMs, effectiveElapsed);
       }
       else
       {
-            m_session->submitReaction(playerId, questionSequence,
-                                      phaseSequence, actionId, elapsedMs);
+            m_session->submitReaction(playerId, questionSequence, phaseSequence,
+                                      actionId, elapsedMs);
       }
 }
 
 void MultiplayerHost::onAnswerSubmitted(PlayerId playerId,
-                                         quint64 questionSequence,
-                                         quint64 phaseSequence,
-                                         quint64 actionId,
-                                         const AnswerSubmission &submission)
+                                        quint64 questionSequence,
+                                        quint64 phaseSequence, quint64 actionId,
+                                        const AnswerSubmission &submission)
 {
       m_session->submitAnswer(playerId, questionSequence, phaseSequence,
                               actionId, submission);
 }
 
-void MultiplayerHost::onAnswerDraftChanged(
-      PlayerId playerId, quint64 questionSequence, quint64 phaseSequence,
-      quint64 actionId, const QString &answer)
+void MultiplayerHost::onAnswerDraftChanged(PlayerId playerId,
+                                           quint64 questionSequence,
+                                           quint64 phaseSequence,
+                                           quint64 actionId,
+                                           const QString &answer)
 {
       AnswerSubmission submission;
       submission.answerType = AnswerType::Text;
-      submission.answer = answer;
+      submission.answer     = answer;
       m_session->updateAnswerDraft(playerId, questionSequence, phaseSequence,
                                    actionId, submission);
 }
@@ -290,7 +301,8 @@ void MultiplayerHost::onSecretWagerSubmitted(PlayerId targetId, int amount,
                                              quint64 questionSequence,
                                              quint64 actionId)
 {
-      m_session->submitSecretWager(targetId, amount, questionSequence, actionId);
+      m_session->submitSecretWager(targetId, amount, questionSequence,
+                                   actionId);
 }
 
 void MultiplayerHost::onPass(PlayerId playerId, quint64 questionSequence,
@@ -324,7 +336,7 @@ void MultiplayerHost::acceptPendingConnections()
       while (m_server->hasPendingConnections())
       {
             QTcpSocket *socket = m_server->nextPendingConnection();
-            auto *connection = new MultiplayerConnection(this);
+            auto *connection   = new MultiplayerConnection(this);
             Peer peer;
             peer.connection = connection;
             m_peers.insert(connection, peer);
@@ -341,7 +353,7 @@ void MultiplayerHost::acceptPendingConnections()
 void MultiplayerHost::handleLine(const QByteArray &line)
 {
       auto *connection = qobject_cast<MultiplayerConnection *>(sender());
-      Peer *peer = peerForConnection(connection);
+      Peer *peer       = peerForConnection(connection);
       if (peer == nullptr)
       {
             return;
@@ -366,7 +378,7 @@ void MultiplayerHost::handleLine(const QByteArray &line)
 void MultiplayerHost::handleDisconnected()
 {
       auto *connection = qobject_cast<MultiplayerConnection *>(sender());
-      Peer *peer = peerForConnection(connection);
+      Peer *peer       = peerForConnection(connection);
       if (peer == nullptr)
       {
             return;
@@ -392,7 +404,7 @@ void MultiplayerHost::handleDisconnected()
 void MultiplayerHost::handleTransportError(const QString &message)
 {
       auto *connection = qobject_cast<MultiplayerConnection *>(sender());
-      Peer *peer = peerForConnection(connection);
+      Peer *peer       = peerForConnection(connection);
       if (peer != nullptr)
       {
             sendError(*peer, QStringLiteral("BAD_FRAME"), message,
@@ -444,7 +456,8 @@ void MultiplayerHost::handleFrame(Peer &peer,
       if (frame.command == QStringLiteral("PONG"))
       {
             quint64 pingId = 0;
-            if (!parseUIntField(frame.fields, QStringLiteral("pingId"), &pingId))
+            if (!parseUIntField(frame.fields, QStringLiteral("pingId"),
+                                &pingId))
             {
                   sendError(peer, QStringLiteral("BAD_FIELD"),
                             QStringLiteral("Invalid ping ID"));
@@ -492,9 +505,9 @@ void MultiplayerHost::handleHello(Peer &peer,
                       fields.value(QStringLiteral("requestId")));
             return;
       }
-      const QString token = fields.value(QStringLiteral("token"));
+      const QString token        = fields.value(QStringLiteral("token"));
       const QString receivedHash = fields.value(QStringLiteral("packHash"));
-      const QString requestId = fields.value(QStringLiteral("requestId"));
+      const QString requestId    = fields.value(QStringLiteral("requestId"));
       if (token.isEmpty() || receivedHash.isEmpty())
       {
             sendError(peer, QStringLiteral("BAD_FIELD"),
@@ -506,16 +519,17 @@ void MultiplayerHost::handleHello(Peer &peer,
           receivedHash.compare(m_config.packHash, Qt::CaseInsensitive) != 0)
       {
             emit packMismatch({}, m_config.packHash, receivedHash);
-            sendFrame(peer, QStringLiteral("ERROR"),
-                      {{QStringLiteral("code"),
-                        QStringLiteral("PACK_MISMATCH")},
-                       {QStringLiteral("message"),
-                        QStringLiteral("The local pack does not match the host")},
-                       {QStringLiteral("expectedHash"), m_config.packHash},
-                       {QStringLiteral("receivedHash"), receivedHash},
-                       {QStringLiteral("requestId"), requestId}});
-            emit protocolError(peer.playerId, QStringLiteral("PACK_MISMATCH"),
-                               QStringLiteral("The local pack does not match the host"));
+            sendFrame(
+                  peer, QStringLiteral("ERROR"),
+                  {{QStringLiteral("code"), QStringLiteral("PACK_MISMATCH")},
+                   {QStringLiteral("message"),
+                    QStringLiteral("The local pack does not match the host")},
+                   {QStringLiteral("expectedHash"), m_config.packHash},
+                   {QStringLiteral("receivedHash"), receivedHash},
+                   {QStringLiteral("requestId"), requestId}});
+            emit protocolError(
+                  peer.playerId, QStringLiteral("PACK_MISMATCH"),
+                  QStringLiteral("The local pack does not match the host"));
             peer.connection->close();
             return;
       }
@@ -526,17 +540,20 @@ void MultiplayerHost::handleHello(Peer &peer,
             if (hasActivePeerForPlayer(reservedId))
             {
                   sendError(peer, QStringLiteral("LOBBY_FULL"),
-                            QStringLiteral("This player token is already connected"),
+                            QStringLiteral(
+                                  "This player token is already connected"),
                             requestId);
                   peer.connection->close();
                   return;
             }
-            peer.playerId = reservedId;
-            peer.token = token;
+            peer.playerId   = reservedId;
+            peer.token      = token;
             peer.handshaken = true;
-            peer.profileTransferId = fields.value(QStringLiteral("profileTransfer"));
-            peer.profilePending = peer.profileTransferId != QStringLiteral("none") &&
-                                  !peer.profileTransferId.isEmpty();
+            peer.profileTransferId =
+                  fields.value(QStringLiteral("profileTransfer"));
+            peer.profilePending =
+                  peer.profileTransferId != QStringLiteral("none") &&
+                  !peer.profileTransferId.isEmpty();
             peer.expectedProfileBytes = -1;
             m_session->setPlayerConnected(reservedId, true);
             const PlayerState *state = m_session->player(reservedId);
@@ -568,23 +585,25 @@ void MultiplayerHost::handleHello(Peer &peer,
             peer.connection->close();
             return;
       }
-      peer.playerId = QStringLiteral("player-%1")
-                            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+      peer.playerId =
+            QStringLiteral("player-%1")
+                  .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
       peer.token = token;
       PlayerState state;
-      state.id = peer.playerId;
-      state.token = token;
-      state.nickname = fields.value(QStringLiteral("nickname"));
+      state.id        = peer.playerId;
+      state.token     = token;
+      state.nickname  = fields.value(QStringLiteral("nickname"));
       state.connected = true;
-      state.ready = false;
+      state.ready     = false;
       if (!m_session->addPlayer(state))
       {
             sendError(peer, QStringLiteral("LOBBY_FULL"),
-                      QStringLiteral("The player could not be added"), requestId);
+                      QStringLiteral("The player could not be added"),
+                      requestId);
             peer.connection->close();
             return;
       }
-      peer.handshaken = true;
+      peer.handshaken        = true;
       peer.profileTransferId = fields.value(QStringLiteral("profileTransfer"));
       peer.profilePending = peer.profileTransferId != QStringLiteral("none") &&
                             !peer.profileTransferId.isEmpty();
@@ -605,8 +624,8 @@ void MultiplayerHost::handleHello(Peer &peer,
       sendRoster();
 }
 
-void MultiplayerHost::handleProfileBegin(
-      Peer &peer, const QMap<QString, QString> &fields)
+void MultiplayerHost::handleProfileBegin(Peer &peer,
+                                         const QMap<QString, QString> &fields)
 {
       if (!peer.handshaken || !peer.profilePending)
       {
@@ -620,16 +639,17 @@ void MultiplayerHost::handleProfileBegin(
                       QStringLiteral("The profile transfer ID is invalid"));
             return;
       }
-      int bytes = 0;
+      int bytes           = 0;
       quint64 parsedBytes = 0;
       if (!parseUIntField(fields, QStringLiteral("bytes"), &parsedBytes) ||
-          parsedBytes > static_cast<quint64>(MultiplayerProtocol::MaxProfileBytes))
+          parsedBytes >
+                static_cast<quint64>(MultiplayerProtocol::MaxProfileBytes))
       {
             sendError(peer, QStringLiteral("PROFILE_INVALID"),
                       QStringLiteral("Invalid profile size"));
             return;
       }
-      bytes = static_cast<int>(parsedBytes);
+      bytes                     = static_cast<int>(parsedBytes);
       peer.expectedProfileBytes = bytes;
       peer.expectedProfileHash =
             fields.value(QStringLiteral("sha256")).toLatin1();
@@ -637,8 +657,8 @@ void MultiplayerHost::handleProfileBegin(
       peer.nextProfileChunk = 0;
 }
 
-void MultiplayerHost::handleProfileChunk(
-      Peer &peer, const QMap<QString, QString> &fields)
+void MultiplayerHost::handleProfileChunk(Peer &peer,
+                                         const QMap<QString, QString> &fields)
 {
       if (!peer.handshaken || peer.expectedProfileBytes < 0)
       {
@@ -654,10 +674,12 @@ void MultiplayerHost::handleProfileChunk(
                       QStringLiteral("Profile chunks are out of order"));
             return;
       }
-      const QByteArray chunk = profileFromBase64(fields.value(QStringLiteral("data")));
+      const QByteArray chunk =
+            profileFromBase64(fields.value(QStringLiteral("data")));
       if (chunk.size() > MultiplayerProtocol::MaxProfileChunkBytes ||
           peer.profileData.size() + chunk.size() > peer.expectedProfileBytes ||
-          peer.profileData.size() + chunk.size() > MultiplayerProtocol::MaxProfileBytes)
+          peer.profileData.size() + chunk.size() >
+                MultiplayerProtocol::MaxProfileBytes)
       {
             sendError(peer, QStringLiteral("PROFILE_INVALID"),
                       QStringLiteral("Invalid profile chunk"));
@@ -671,16 +693,18 @@ void MultiplayerHost::handleProfileEnd(Peer &peer,
                                        const QMap<QString, QString> &fields)
 {
       if (!peer.handshaken || peer.expectedProfileBytes < 0 ||
-          fields.value(QStringLiteral("transferId")) != peer.profileTransferId ||
+          fields.value(QStringLiteral("transferId")) !=
+                peer.profileTransferId ||
           peer.profileData.size() != peer.expectedProfileBytes)
       {
             sendError(peer, QStringLiteral("PROFILE_INVALID"),
                       QStringLiteral("The profile transfer is incomplete"));
             return;
       }
-      const QByteArray hash = QCryptographicHash::hash(
-            peer.profileData, QCryptographicHash::Sha256)
-                                  .toHex();
+      const QByteArray hash =
+            QCryptographicHash::hash(peer.profileData,
+                                     QCryptographicHash::Sha256)
+                  .toHex();
       if (QImage::fromData(peer.profileData).isNull())
       {
             sendError(peer, QStringLiteral("PROFILE_INVALID"),
@@ -702,7 +726,7 @@ void MultiplayerHost::handleProfileEnd(Peer &peer,
             return;
       }
       m_session->updatePlayerProfile(peer.playerId, normalized);
-      peer.profilePending = false;
+      peer.profilePending       = false;
       peer.expectedProfileBytes = -1;
       sendRoster();
 }
@@ -731,9 +755,8 @@ void MultiplayerHost::handleReady(Peer &peer,
       else
       {
             const QVector<PlayerState> roster = m_session->players();
-            const int connected = static_cast<int>(std::count_if(
-                  roster.cbegin(), roster.cend(),
-                  [](const PlayerState &state)
+            const int connected               = static_cast<int>(std::count_if(
+                  roster.cbegin(), roster.cend(), [](const PlayerState &state)
                   { return state.connected && state.ready; }));
             if (connected >= m_config.maxPlayers)
             {
@@ -746,23 +769,24 @@ void MultiplayerHost::handleAction(Peer &peer,
                                    const MultiplayerProtocol::Frame &frame)
 {
       const QMap<QString, QString> &fields = frame.fields;
-      peer.requestId = fields.value(QStringLiteral("requestId"));
-      m_lastRequestId = peer.requestId;
+      peer.requestId   = fields.value(QStringLiteral("requestId"));
+      m_lastRequestId  = peer.requestId;
       quint64 actionId = 0;
       if (!parseUIntField(fields, QStringLiteral("actionId"), &actionId) ||
           actionId == 0)
       {
             sendError(peer, QStringLiteral("BAD_FIELD"),
-                      QStringLiteral("An action ID is required"), peer.requestId);
+                      QStringLiteral("An action ID is required"),
+                      peer.requestId);
             return;
       }
       quint64 questionSequence = 0;
-      quint64 phaseSequence = 0;
+      quint64 phaseSequence    = 0;
       if (frame.command == QStringLiteral("SELECT_QUESTION"))
       {
-            int round = 0;
-            int theme = 0;
-            int question = 0;
+            int round              = 0;
+            int theme              = 0;
+            int question           = 0;
             quint64 requestedPhase = 0;
             if (!parseUIntField(fields, QStringLiteral("phaseSeq"),
                                 &requestedPhase))
@@ -798,7 +822,8 @@ void MultiplayerHost::handleAction(Peer &peer,
                                 &questionSequence) ||
                 !parseUIntField(fields, QStringLiteral("phaseSeq"),
                                 &phaseSequence) ||
-                !parseUIntField(fields, QStringLiteral("elapsedMs"), &elapsed) ||
+                !parseUIntField(fields, QStringLiteral("elapsedMs"),
+                                &elapsed) ||
                 elapsed > std::numeric_limits<unsigned int>::max())
             {
                   sendError(peer, QStringLiteral("BAD_FIELD"),
@@ -823,8 +848,8 @@ void MultiplayerHost::handleAction(Peer &peer,
                             peer.requestId);
                   return;
             }
-            onAnswerDraftChanged(peer.playerId, questionSequence,
-                                 phaseSequence, actionId,
+            onAnswerDraftChanged(peer.playerId, questionSequence, phaseSequence,
+                                 actionId,
                                  fields.value(QStringLiteral("answer")));
             return;
       }
@@ -873,9 +898,9 @@ void MultiplayerHost::handleAction(Peer &peer,
                             peer.requestId);
                   return;
             }
-            onSecretTargetSelected(peer.playerId,
-                                   fields.value(QStringLiteral("targetPlayerId")),
-                                   questionSequence, actionId);
+            onSecretTargetSelected(
+                  peer.playerId, fields.value(QStringLiteral("targetPlayerId")),
+                  questionSequence, actionId);
             return;
       }
       if (frame.command == QStringLiteral("SECRET_WAGER"))
@@ -902,8 +927,8 @@ void MultiplayerHost::handleAction(Peer &peer,
             bool paused = false;
             if (!parseUIntField(fields, QStringLiteral("phaseSeq"),
                                 &phaseSequence) ||
-                !MultiplayerProtocol::parseBool(fields, QStringLiteral("paused"),
-                                                &paused))
+                !MultiplayerProtocol::parseBool(
+                      fields, QStringLiteral("paused"), &paused))
             {
                   sendError(peer, QStringLiteral("BAD_FIELD"),
                             QStringLiteral("Invalid pause request"),
@@ -929,10 +954,11 @@ void MultiplayerHost::handleAction(Peer &peer,
       if (frame.command == QStringLiteral("APPEAL_VOTE"))
       {
             quint64 appealId = 0;
-            bool accepted = false;
-            if (!parseUIntField(fields, QStringLiteral("appealId"), &appealId) ||
-                !MultiplayerProtocol::parseBool(fields, QStringLiteral("accepted"),
-                                                &accepted))
+            bool accepted    = false;
+            if (!parseUIntField(fields, QStringLiteral("appealId"),
+                                &appealId) ||
+                !MultiplayerProtocol::parseBool(
+                      fields, QStringLiteral("accepted"), &accepted))
             {
                   sendError(peer, QStringLiteral("BAD_FIELD"),
                             QStringLiteral("Invalid appeal vote"),
@@ -958,30 +984,31 @@ bool MultiplayerHost::parseAnswer(const QMap<QString, QString> &fields,
       if (type.compare(QStringLiteral("Text"), Qt::CaseInsensitive) == 0)
       {
             submission->answerType = AnswerType::Text;
-            submission->answer = fields.value(QStringLiteral("answer"));
+            submission->answer     = fields.value(QStringLiteral("answer"));
       }
       else if (type.compare(QStringLiteral("Select"), Qt::CaseInsensitive) == 0)
       {
             submission->answerType = AnswerType::Select;
-            submission->optionId = fields.value(QStringLiteral("optionId"));
+            submission->optionId   = fields.value(QStringLiteral("optionId"));
       }
       else if (type.compare(QStringLiteral("Point"), Qt::CaseInsensitive) == 0)
       {
-            bool xOk = false;
-            bool yOk = false;
+            bool xOk       = false;
+            bool yOk       = false;
             const double x = fields.value(QStringLiteral("x")).toDouble(&xOk);
             const double y = fields.value(QStringLiteral("y")).toDouble(&yOk);
             if (!xOk || !yOk || !std::isfinite(x) || !std::isfinite(y))
             {
                   if (errorMessage != nullptr)
                   {
-                        *errorMessage = QStringLiteral("Invalid point coordinates");
+                        *errorMessage =
+                              QStringLiteral("Invalid point coordinates");
                   }
                   return false;
             }
             submission->answerType = AnswerType::Point;
-            submission->point = QPointF(x, y);
-            submission->hasPoint = true;
+            submission->point      = QPointF(x, y);
+            submission->hasPoint   = true;
       }
       else
       {
@@ -1000,8 +1027,8 @@ void MultiplayerHost::sendFrame(Peer &peer, const QString &command,
 {
       if (peer.connection != nullptr)
       {
-            peer.connection->sendLine(MultiplayerProtocol::encodeFrame(command,
-                                                                        fields));
+            peer.connection->sendLine(
+                  MultiplayerProtocol::encodeFrame(command, fields));
       }
 }
 
@@ -1037,7 +1064,8 @@ void MultiplayerHost::sendError(PlayerId playerId, const QString &code,
 void MultiplayerHost::broadcast(const QString &command,
                                 const QMap<QString, QString> &fields)
 {
-      for (auto iterator = m_peers.begin(); iterator != m_peers.end(); ++iterator)
+      for (auto iterator = m_peers.begin(); iterator != m_peers.end();
+           ++iterator)
       {
             if (iterator.value().handshaken)
             {
@@ -1052,7 +1080,8 @@ void MultiplayerHost::sendRoster()
       ++m_rosterSequence;
       const QVector<PlayerState> roster = m_session->players();
       emit rosterChanged(roster);
-      for (auto iterator = m_peers.begin(); iterator != m_peers.end(); ++iterator)
+      for (auto iterator = m_peers.begin(); iterator != m_peers.end();
+           ++iterator)
       {
             if (iterator.value().handshaken)
             {
@@ -1064,48 +1093,43 @@ void MultiplayerHost::sendRoster()
 void MultiplayerHost::sendRoster(Peer &peer)
 {
       const QVector<PlayerState> roster = m_session->players();
-      const int connected = static_cast<int>(std::count_if(
+      const int connected               = static_cast<int>(std::count_if(
             roster.cbegin(), roster.cend(),
             [](const PlayerState &state) { return state.connected; }));
-      const int reserved = static_cast<int>(std::count_if(
+      const int reserved                = static_cast<int>(std::count_if(
             roster.cbegin(), roster.cend(),
             [](const PlayerState &state) { return !state.connected; }));
-      sendFrame(peer, QStringLiteral("LOBBY_STATE"),
-                {{QStringLiteral("sessionId"), m_session->sessionId()},
-                 {QStringLiteral("rosterSeq"),
-                  stringValue(m_rosterSequence)},
-                 {QStringLiteral("connected"), stringValue(connected)},
-                 {QStringLiteral("reserved"), stringValue(reserved)},
-                 {QStringLiteral("maxPlayers"),
-                  stringValue(m_config.maxPlayers)},
-                 {QStringLiteral("started"), boolValue(m_started)}});
+      sendFrame(
+            peer, QStringLiteral("LOBBY_STATE"),
+            {{QStringLiteral("sessionId"), m_session->sessionId()},
+             {QStringLiteral("rosterSeq"), stringValue(m_rosterSequence)},
+             {QStringLiteral("connected"), stringValue(connected)},
+             {QStringLiteral("reserved"), stringValue(reserved)},
+             {QStringLiteral("maxPlayers"), stringValue(m_config.maxPlayers)},
+             {QStringLiteral("started"), boolValue(m_started)}});
       sendFrame(peer, QStringLiteral("ROSTER_BEGIN"),
                 {{QStringLiteral("rosterSeq"), stringValue(m_rosterSequence)},
                  {QStringLiteral("count"), stringValue(roster.size())}});
       for (const PlayerState &state : roster)
       {
-            sendFrame(peer, QStringLiteral("ROSTER_PLAYER"),
-                      {{QStringLiteral("rosterSeq"),
-                        stringValue(m_rosterSequence)},
-                       {QStringLiteral("playerId"), state.id},
-                       {QStringLiteral("nickname"), state.nickname},
-                       {QStringLiteral("connected"), boolValue(state.connected)},
-                       {QStringLiteral("ready"), boolValue(state.ready)},
-                       {QStringLiteral("balance"), stringValue(state.balance)},
-                       {QStringLiteral("hasPassed"),
-                        boolValue(state.hasPassed)},
-                       {QStringLiteral("answeredIncorrectly"),
-                        boolValue(state.answeredIncorrectly)},
-                       {QStringLiteral("hasAnsweredForAll"),
-                        boolValue(state.hasAnsweredForAll)},
-                       {QStringLiteral("mayAppeal"),
-                        boolValue(state.mayAppeal)},
-                       {QStringLiteral("isPicker"),
-                        boolValue(state.isPicker)}});
+            sendFrame(
+                  peer, QStringLiteral("ROSTER_PLAYER"),
+                  {{QStringLiteral("rosterSeq"), stringValue(m_rosterSequence)},
+                   {QStringLiteral("playerId"), state.id},
+                   {QStringLiteral("nickname"), state.nickname},
+                   {QStringLiteral("connected"), boolValue(state.connected)},
+                   {QStringLiteral("ready"), boolValue(state.ready)},
+                   {QStringLiteral("balance"), stringValue(state.balance)},
+                   {QStringLiteral("hasPassed"), boolValue(state.hasPassed)},
+                   {QStringLiteral("answeredIncorrectly"),
+                    boolValue(state.answeredIncorrectly)},
+                   {QStringLiteral("hasAnsweredForAll"),
+                    boolValue(state.hasAnsweredForAll)},
+                   {QStringLiteral("mayAppeal"), boolValue(state.mayAppeal)},
+                   {QStringLiteral("isPicker"), boolValue(state.isPicker)}});
       }
       sendFrame(peer, QStringLiteral("ROSTER_END"),
-                {{QStringLiteral("rosterSeq"),
-                  stringValue(m_rosterSequence)}});
+                {{QStringLiteral("rosterSeq"), stringValue(m_rosterSequence)}});
       for (const PlayerState &state : roster)
       {
             sendProfile(peer, state);
@@ -1125,16 +1149,19 @@ void MultiplayerHost::sendProfile(Peer &peer, const PlayerState &state)
       {
             return;
       }
-      const QString transferId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-      sendFrame(peer, QStringLiteral("PROFILE_BEGIN"),
-                {{QStringLiteral("transferId"), transferId},
-                 {QStringLiteral("playerId"), state.id},
-                 {QStringLiteral("format"), QStringLiteral("png")},
-                 {QStringLiteral("bytes"), stringValue(state.profilePng.size())},
-                 {QStringLiteral("sha256"), QString::fromLatin1(hash.toHex())}});
+      const QString transferId =
+            QUuid::createUuid().toString(QUuid::WithoutBraces);
+      sendFrame(
+            peer, QStringLiteral("PROFILE_BEGIN"),
+            {{QStringLiteral("transferId"), transferId},
+             {QStringLiteral("playerId"), state.id},
+             {QStringLiteral("format"), QStringLiteral("png")},
+             {QStringLiteral("bytes"), stringValue(state.profilePng.size())},
+             {QStringLiteral("sha256"), QString::fromLatin1(hash.toHex())}});
       constexpr int chunkSize = 24 * 1024;
-      int index = 0;
-      for (int offset = 0; offset < state.profilePng.size(); offset += chunkSize)
+      int index               = 0;
+      for (int offset = 0; offset < state.profilePng.size();
+           offset += chunkSize)
       {
             const QByteArray chunk = state.profilePng.mid(offset, chunkSize);
             sendFrame(peer, QStringLiteral("PROFILE_CHUNK"),
@@ -1145,36 +1172,38 @@ void MultiplayerHost::sendProfile(Peer &peer, const PlayerState &state)
                               QByteArray::Base64UrlEncoding |
                               QByteArray::OmitTrailingEquals))}});
       }
-      sendFrame(peer, QStringLiteral("PROFILE_END"),
-                {{QStringLiteral("transferId"), transferId},
-                 {QStringLiteral("sha256"), QString::fromLatin1(hash.toHex())}});
+      sendFrame(
+            peer, QStringLiteral("PROFILE_END"),
+            {{QStringLiteral("transferId"), transferId},
+             {QStringLiteral("sha256"), QString::fromLatin1(hash.toHex())}});
       peer.sentProfileHashes.insert(state.id, hash);
 }
 
 void MultiplayerHost::sendGameStarted()
 {
-      broadcast(QStringLiteral("GAME_STARTED"),
-                {{QStringLiteral("sessionId"), m_session->sessionId()},
-                 {QStringLiteral("round"), QStringLiteral("0")},
-                 {QStringLiteral("maxPlayers"), stringValue(m_config.maxPlayers)},
-                 {QStringLiteral("answerDurationMs"),
-                  stringValue(m_config.answerDurationMs)},
-                 {QStringLiteral("questionDurationMs"),
-                  stringValue(m_config.questionDurationMs)},
-                 {QStringLiteral("questionPickDurationMs"),
-                  stringValue(m_config.questionPickDurationMs)},
-                 {QStringLiteral("answerWaitDurationMs"),
-                  stringValue(m_config.answerWaitDurationMs)},
-                 {QStringLiteral("answerRevealDurationMs"),
-                  stringValue(m_config.answerRevealDurationMs)},
-                 {QStringLiteral("appealDurationMs"),
-                  stringValue(m_config.appealDurationMs)}});
+      broadcast(
+            QStringLiteral("GAME_STARTED"),
+            {{QStringLiteral("sessionId"), m_session->sessionId()},
+             {QStringLiteral("round"), stringValue(m_session->roundIndex())},
+             {QStringLiteral("maxPlayers"), stringValue(m_config.maxPlayers)},
+             {QStringLiteral("answerDurationMs"),
+              stringValue(m_config.answerDurationMs)},
+             {QStringLiteral("questionDurationMs"),
+              stringValue(m_config.questionDurationMs)},
+             {QStringLiteral("questionPickDurationMs"),
+              stringValue(m_config.questionPickDurationMs)},
+             {QStringLiteral("answerWaitDurationMs"),
+              stringValue(m_config.answerWaitDurationMs)},
+             {QStringLiteral("answerRevealDurationMs"),
+              stringValue(m_config.answerRevealDurationMs)},
+             {QStringLiteral("appealDurationMs"),
+              stringValue(m_config.appealDurationMs)}});
 }
 
 void MultiplayerHost::sendSnapshot(Peer &peer)
 {
       const SessionSnapshot snapshot = m_session->snapshot();
-      const QString snapshotSeq = stringValue(snapshot.snapshotSequence);
+      const QString snapshotSeq      = stringValue(snapshot.snapshotSequence);
       sendFrame(peer, QStringLiteral("SNAPSHOT_BEGIN"),
                 {{QStringLiteral("snapshotSeq"), snapshotSeq},
                  {QStringLiteral("sessionId"), snapshot.sessionId},
@@ -1184,6 +1213,7 @@ void MultiplayerHost::sendSnapshot(Peer &peer)
                   stringValue(snapshot.phase.questionSequence)},
                  {QStringLiteral("boardSeq"),
                   stringValue(snapshot.board.boardSequence)},
+                 {QStringLiteral("round"), stringValue(snapshot.board.round)},
                  {QStringLiteral("phase"),
                   MultiplayerProtocol::phaseName(snapshot.phase.phase)},
                  {QStringLiteral("paused"), boolValue(snapshot.paused)},
@@ -1191,29 +1221,31 @@ void MultiplayerHost::sendSnapshot(Peer &peer)
                   stringValue(snapshot.phase.remainingMs)},
                  {QStringLiteral("currentPicker"), snapshot.currentPicker},
                  {QStringLiteral("answerOwner"), snapshot.answerOwner}});
-      sendFrame(peer, QStringLiteral("SNAPSHOT_CONFIG"),
-                {{QStringLiteral("snapshotSeq"), snapshotSeq},
-                 {QStringLiteral("maxPlayers"), stringValue(m_config.maxPlayers)},
-                 {QStringLiteral("answerDurationMs"),
-                  stringValue(m_config.answerDurationMs)},
-                 {QStringLiteral("questionDurationMs"),
-                  stringValue(m_config.questionDurationMs)},
-                 {QStringLiteral("questionPickDurationMs"),
-                  stringValue(m_config.questionPickDurationMs)},
-                 {QStringLiteral("answerWaitDurationMs"),
-                  stringValue(m_config.answerWaitDurationMs)}});
+      sendFrame(
+            peer, QStringLiteral("SNAPSHOT_CONFIG"),
+            {{QStringLiteral("snapshotSeq"), snapshotSeq},
+             {QStringLiteral("maxPlayers"), stringValue(m_config.maxPlayers)},
+             {QStringLiteral("answerDurationMs"),
+              stringValue(m_config.answerDurationMs)},
+             {QStringLiteral("questionDurationMs"),
+              stringValue(m_config.questionDurationMs)},
+             {QStringLiteral("questionPickDurationMs"),
+              stringValue(m_config.questionPickDurationMs)},
+             {QStringLiteral("answerWaitDurationMs"),
+              stringValue(m_config.answerWaitDurationMs)}});
       for (const PlayerState &state : snapshot.players)
       {
-            sendFrame(peer, QStringLiteral("SNAPSHOT_PLAYER"),
-                      {{QStringLiteral("snapshotSeq"), snapshotSeq},
-                       {QStringLiteral("playerId"), state.id},
-                       {QStringLiteral("nickname"), state.nickname},
-                       {QStringLiteral("connected"), boolValue(state.connected)},
-                       {QStringLiteral("balance"), stringValue(state.balance)},
-                       {QStringLiteral("hasPassed"), boolValue(state.hasPassed)},
-                       {QStringLiteral("answeredIncorrectly"),
-                        boolValue(state.answeredIncorrectly)},
-                       {QStringLiteral("mayAppeal"), boolValue(state.mayAppeal)}});
+            sendFrame(
+                  peer, QStringLiteral("SNAPSHOT_PLAYER"),
+                  {{QStringLiteral("snapshotSeq"), snapshotSeq},
+                   {QStringLiteral("playerId"), state.id},
+                   {QStringLiteral("nickname"), state.nickname},
+                   {QStringLiteral("connected"), boolValue(state.connected)},
+                   {QStringLiteral("balance"), stringValue(state.balance)},
+                   {QStringLiteral("hasPassed"), boolValue(state.hasPassed)},
+                   {QStringLiteral("answeredIncorrectly"),
+                    boolValue(state.answeredIncorrectly)},
+                   {QStringLiteral("mayAppeal"), boolValue(state.mayAppeal)}});
       }
       for (const BoardCell &cell : snapshot.board.cells)
       {
@@ -1309,21 +1341,23 @@ void MultiplayerHost::sendSnapshot(Peer &peer)
             }
             sendFrame(peer, QStringLiteral("SECRET_TARGETS"), fields);
       }
-      if (m_session->phase() == SessionPhase::SecretWager &&
-          peer.playerId == m_session->secretTarget())
+      if ((m_session->phase() == SessionPhase::SecretWager &&
+           peer.playerId == m_session->secretTarget()) ||
+          (m_session->phase() == SessionPhase::FinalWager &&
+           m_session->isFinalWagerPending(peer.playerId)))
       {
             const SecretWagerParameters parameters =
-                  m_session->secretWagerParameters();
-            sendFrame(peer, QStringLiteral("SECRET_WAGER_PROMPT"),
-                      {{QStringLiteral("questionSeq"),
-                        stringValue(m_session->questionSequence())},
-                       {QStringLiteral("minimum"),
-                        stringValue(parameters.minimum)},
-                       {QStringLiteral("maximum"),
-                        stringValue(parameters.maximum)},
-                       {QStringLiteral("step"),
-                        stringValue(parameters.step)},
-                       {QStringLiteral("secretTheme"), parameters.theme}});
+                  m_session->phase() == SessionPhase::FinalWager
+                        ? m_session->finalWagerParameters(peer.playerId)
+                        : m_session->secretWagerParameters();
+            sendFrame(
+                  peer, QStringLiteral("SECRET_WAGER_PROMPT"),
+                  {{QStringLiteral("questionSeq"),
+                    stringValue(m_session->questionSequence())},
+                   {QStringLiteral("minimum"), stringValue(parameters.minimum)},
+                   {QStringLiteral("maximum"), stringValue(parameters.maximum)},
+                   {QStringLiteral("step"), stringValue(parameters.step)},
+                   {QStringLiteral("secretTheme"), parameters.theme}});
       }
       sendFrame(peer, QStringLiteral("SNAPSHOT_END"),
                 {{QStringLiteral("snapshotSeq"), snapshotSeq}});
@@ -1331,7 +1365,8 @@ void MultiplayerHost::sendSnapshot(Peer &peer)
 
 MultiplayerHost::Peer *MultiplayerHost::peerForPlayer(const PlayerId &playerId)
 {
-      for (auto iterator = m_peers.begin(); iterator != m_peers.end(); ++iterator)
+      for (auto iterator = m_peers.begin(); iterator != m_peers.end();
+           ++iterator)
       {
             if (iterator.value().playerId == playerId)
             {
@@ -1341,10 +1376,11 @@ MultiplayerHost::Peer *MultiplayerHost::peerForPlayer(const PlayerId &playerId)
       return nullptr;
 }
 
-const MultiplayerHost::Peer *MultiplayerHost::peerForPlayer(
-      const PlayerId &playerId) const
+const MultiplayerHost::Peer *
+MultiplayerHost::peerForPlayer(const PlayerId &playerId) const
 {
-      for (auto iterator = m_peers.cbegin(); iterator != m_peers.cend(); ++iterator)
+      for (auto iterator = m_peers.cbegin(); iterator != m_peers.cend();
+           ++iterator)
       {
             if (iterator.value().playerId == playerId)
             {
@@ -1354,8 +1390,8 @@ const MultiplayerHost::Peer *MultiplayerHost::peerForPlayer(
       return nullptr;
 }
 
-MultiplayerHost::Peer *MultiplayerHost::peerForConnection(
-      MultiplayerConnection *connection)
+MultiplayerHost::Peer *
+MultiplayerHost::peerForConnection(MultiplayerConnection *connection)
 {
       auto iterator = m_peers.find(connection);
       return iterator == m_peers.end() ? nullptr : &iterator.value();
@@ -1432,21 +1468,22 @@ void MultiplayerHost::connectSessionSignals()
               });
       connect(m_session, &GameSession::questionStarted, this,
               [this](const QuestionPresentation &question)
-              { sendSessionEvent(QStringLiteral("QUESTION_START"),
-                                 questionFields(question)); });
+              {
+                    sendSessionEvent(QStringLiteral("QUESTION_START"),
+                                     questionFields(question));
+              });
       connect(m_session, &GameSession::reactionOpened, this,
               [this](const ReactionState &state)
               {
-                    sendSessionEvent(
-                          QStringLiteral("REACTION_OPEN"),
-                          {{QStringLiteral("phaseSeq"),
-                            stringValue(state.phaseSequence)},
-                           {QStringLiteral("questionSeq"),
-                            stringValue(state.questionSequence)},
-                           {QStringLiteral("durationMs"),
-                            stringValue(state.durationMs)},
-                           {QStringLiteral("remainingMs"),
-                            stringValue(state.remainingMs)}});
+                    sendSessionEvent(QStringLiteral("REACTION_OPEN"),
+                                     {{QStringLiteral("phaseSeq"),
+                                       stringValue(state.phaseSequence)},
+                                      {QStringLiteral("questionSeq"),
+                                       stringValue(state.questionSequence)},
+                                      {QStringLiteral("durationMs"),
+                                       stringValue(state.durationMs)},
+                                      {QStringLiteral("remainingMs"),
+                                       stringValue(state.remainingMs)}});
               });
       connect(m_session, &GameSession::reactionWinner, this,
               [this](const PlayerId &playerId, unsigned int elapsedMs)
@@ -1474,26 +1511,28 @@ void MultiplayerHost::connectSessionSignals()
                            {QStringLiteral("durationMs"),
                             stringValue(durationMs)}});
               });
-      connect(m_session, &GameSession::answerResult, this,
-              [this](const AnswerResult &result)
-              {
-                    sendSessionEvent(
-                          QStringLiteral("ANSWER_RESULT"),
-                          {{QStringLiteral("questionSeq"),
-                            stringValue(result.questionSequence)},
-                           {QStringLiteral("playerId"), result.playerId},
-                           {QStringLiteral("correct"), boolValue(result.correct)},
-                           {QStringLiteral("amount"), stringValue(result.amount)},
-                           {QStringLiteral("balance"), stringValue(result.balance)},
-                           {QStringLiteral("answerKind"),
-                            MultiplayerProtocol::answerTypeName(
-                                  static_cast<int>(result.answerKind))},
-                           {QStringLiteral("submitted"), result.submitted},
-                           {QStringLiteral("remainingReactionMs"),
-                            stringValue(result.remainingReactionMs)},
-                           {QStringLiteral("retryAllowed"),
-                            boolValue(result.retryAllowed)}});
-              });
+      connect(
+            m_session, &GameSession::answerResult, this,
+            [this](const AnswerResult &result)
+            {
+                  sendSessionEvent(
+                        QStringLiteral("ANSWER_RESULT"),
+                        {{QStringLiteral("questionSeq"),
+                          stringValue(result.questionSequence)},
+                         {QStringLiteral("playerId"), result.playerId},
+                         {QStringLiteral("correct"), boolValue(result.correct)},
+                         {QStringLiteral("amount"), stringValue(result.amount)},
+                         {QStringLiteral("balance"),
+                          stringValue(result.balance)},
+                         {QStringLiteral("answerKind"),
+                          MultiplayerProtocol::answerTypeName(
+                                static_cast<int>(result.answerKind))},
+                         {QStringLiteral("submitted"), result.submitted},
+                         {QStringLiteral("remainingReactionMs"),
+                          stringValue(result.remainingReactionMs)},
+                         {QStringLiteral("retryAllowed"),
+                          boolValue(result.retryAllowed)}});
+            });
       connect(m_session, &GameSession::reactionResumed, this,
               [this](unsigned int remainingMs, const PlayerId &excluded)
               {
@@ -1503,7 +1542,8 @@ void MultiplayerHost::connectSessionSignals()
                             stringValue(m_session->phaseSequence())},
                            {QStringLiteral("questionSeq"),
                             stringValue(m_session->questionSequence())},
-                           {QStringLiteral("remainingMs"), stringValue(remainingMs)},
+                           {QStringLiteral("remainingMs"),
+                            stringValue(remainingMs)},
                            {QStringLiteral("excludedPlayerId"), excluded}});
               });
       connect(m_session, &GameSession::answerRevealed, this,
@@ -1523,23 +1563,25 @@ void MultiplayerHost::connectSessionSignals()
                            stringValue(reveal.mediaDurationMs)},
                           {QStringLiteral("answerOwner"), reveal.answerOwner},
                           {QStringLiteral("nextPicker"), reveal.nextPicker}};
-                    for (int index = 0; index < reveal.rightAnswers.size(); ++index)
+                    for (int index = 0; index < reveal.rightAnswers.size();
+                         ++index)
                     {
                           fields.insert(QStringLiteral("right%1").arg(index),
                                         reveal.rightAnswers[index]);
                     }
                     sendSessionEvent(QStringLiteral("ANSWER_REVEAL"), fields);
               });
-      connect(m_session, &GameSession::forAllProgress, this,
-              [this](quint64 questionSequence, int received, int expected)
-              {
-                    sendSessionEvent(
-                          QStringLiteral("FORALL_PROGRESS"),
-                          {{QStringLiteral("questionSeq"),
-                            stringValue(questionSequence)},
-                           {QStringLiteral("received"), stringValue(received)},
-                           {QStringLiteral("expected"), stringValue(expected)}});
-              });
+      connect(
+            m_session, &GameSession::forAllProgress, this,
+            [this](quint64 questionSequence, int received, int expected)
+            {
+                  sendSessionEvent(
+                        QStringLiteral("FORALL_PROGRESS"),
+                        {{QStringLiteral("questionSeq"),
+                          stringValue(questionSequence)},
+                         {QStringLiteral("received"), stringValue(received)},
+                         {QStringLiteral("expected"), stringValue(expected)}});
+            });
       connect(m_session, &GameSession::forAllResult, this,
               [this](const ForAllResult &result)
               {
@@ -1583,8 +1625,8 @@ void MultiplayerHost::connectSessionSignals()
                            stringValue(appeal.voters.size())},
                           {QStringLiteral("durationMs"),
                            stringValue(appeal.durationMs)}};
-                    for (int index = 0;
-                         index < appeal.rightAnswers.size(); ++index)
+                    for (int index = 0; index < appeal.rightAnswers.size();
+                         ++index)
                     {
                           fields.insert(QStringLiteral("right%1").arg(index),
                                         appeal.rightAnswers[index]);
@@ -1596,7 +1638,8 @@ void MultiplayerHost::connectSessionSignals()
               {
                     sendSessionEvent(
                           QStringLiteral("APPEAL_RESULT"),
-                          {{QStringLiteral("appealId"), stringValue(result.appealId)},
+                          {{QStringLiteral("appealId"),
+                            stringValue(result.appealId)},
                            {QStringLiteral("questionSeq"),
                             stringValue(result.questionSequence)},
                            {QStringLiteral("accepted"),
@@ -1608,21 +1651,25 @@ void MultiplayerHost::connectSessionSignals()
                             stringValue(result.balance)},
                            {QStringLiteral("nextPicker"), result.nextPicker}});
               });
+      connect(
+            m_session, &GameSession::roundStarted, this,
+            [this](int roundIndex, const PlayerId &picker)
+            {
+                  sendSessionEvent(
+                        QStringLiteral("ROUND_STARTED"),
+                        {{QStringLiteral("sessionId"), m_session->sessionId()},
+                         {QStringLiteral("round"), stringValue(roundIndex)},
+                         {QStringLiteral("picker"), picker},
+                         {QStringLiteral("phaseSeq"),
+                          stringValue(m_session->phaseSequence())}});
+            });
       connect(m_session, &GameSession::pickerChanged, this,
               [this](const PlayerId &playerId)
               {
-                    sendSessionEvent(
-                          QStringLiteral("PICKER_CHANGED"),
-                          {{QStringLiteral("phaseSeq"),
-                            stringValue(m_session->phaseSequence())},
-                           {QStringLiteral("playerId"), playerId}});
-                    sendSessionEvent(
-                          QStringLiteral("ROUND_STARTED"),
-                          {{QStringLiteral("sessionId"), m_session->sessionId()},
-                           {QStringLiteral("round"), QStringLiteral("0")},
-                           {QStringLiteral("picker"), playerId},
-                           {QStringLiteral("phaseSeq"),
-                            stringValue(m_session->phaseSequence())}});
+                    sendSessionEvent(QStringLiteral("PICKER_CHANGED"),
+                                     {{QStringLiteral("phaseSeq"),
+                                       stringValue(m_session->phaseSequence())},
+                                      {QStringLiteral("playerId"), playerId}});
               });
       connect(m_session, &GameSession::playersChanged, this,
               [this](const QVector<PlayerState> &players)
@@ -1630,51 +1677,53 @@ void MultiplayerHost::connectSessionSignals()
                     emit rosterChanged(players);
                     sendRoster();
               });
-      connect(m_session, &GameSession::secretTargetsReady, this,
-              [this](quint64 questionSequence,
-                     const QVector<PlayerState> &targets)
-              {
-                    Peer *picker = peerForPlayer(m_session->currentPicker());
-                    if (picker == nullptr)
-                    {
-                          return;
-                    }
-                    const QString selectionMode =
-                          m_session->secretSelectionMode();
-                    QMap<QString, QString> fields{
-                          {QStringLiteral("questionSeq"),
-                           stringValue(questionSequence)},
-                          {QStringLiteral("selectionMode"), selectionMode},
-                          {QStringLiteral("count"), stringValue(targets.size())}};
-                    for (int index = 0; index < targets.size(); ++index)
-                    {
-                          fields.insert(QStringLiteral("target%1").arg(index),
-                                        targets[index].id);
-                          fields.insert(QStringLiteral("target%1Name").arg(index),
-                                        targets[index].nickname);
-                    }
-                    sendFrame(*picker, QStringLiteral("SECRET_TARGETS"), fields);
-              });
-      connect(m_session, &GameSession::secretWagerPrompt, this,
-              [this](const PlayerId &target,
-                     const SecretWagerParameters &parameters)
-              {
-                    Peer *peer = peerForPlayer(target);
-                    if (peer == nullptr)
-                    {
-                          return;
-                    }
-                    sendFrame(*peer, QStringLiteral("SECRET_WAGER_PROMPT"),
-                              {{QStringLiteral("questionSeq"),
-                                stringValue(m_session->questionSequence())},
-                               {QStringLiteral("minimum"),
-                                stringValue(parameters.minimum)},
-                               {QStringLiteral("maximum"),
-                                stringValue(parameters.maximum)},
-                               {QStringLiteral("step"),
-                                stringValue(parameters.step)},
-                               {QStringLiteral("secretTheme"), parameters.theme}});
-              });
+      connect(
+            m_session, &GameSession::secretTargetsReady, this,
+            [this](quint64 questionSequence,
+                   const QVector<PlayerState> &targets)
+            {
+                  Peer *picker = peerForPlayer(m_session->currentPicker());
+                  if (picker == nullptr)
+                  {
+                        return;
+                  }
+                  const QString selectionMode =
+                        m_session->secretSelectionMode();
+                  QMap<QString, QString> fields{
+                        {QStringLiteral("questionSeq"),
+                         stringValue(questionSequence)},
+                        {QStringLiteral("selectionMode"), selectionMode},
+                        {QStringLiteral("count"), stringValue(targets.size())}};
+                  for (int index = 0; index < targets.size(); ++index)
+                  {
+                        fields.insert(QStringLiteral("target%1").arg(index),
+                                      targets[index].id);
+                        fields.insert(QStringLiteral("target%1Name").arg(index),
+                                      targets[index].nickname);
+                  }
+                  sendFrame(*picker, QStringLiteral("SECRET_TARGETS"), fields);
+            });
+      connect(
+            m_session, &GameSession::secretWagerPrompt, this,
+            [this](const PlayerId &target,
+                   const SecretWagerParameters &parameters)
+            {
+                  Peer *peer = peerForPlayer(target);
+                  if (peer == nullptr)
+                  {
+                        return;
+                  }
+                  sendFrame(
+                        *peer, QStringLiteral("SECRET_WAGER_PROMPT"),
+                        {{QStringLiteral("questionSeq"),
+                          stringValue(m_session->questionSequence())},
+                         {QStringLiteral("minimum"),
+                          stringValue(parameters.minimum)},
+                         {QStringLiteral("maximum"),
+                          stringValue(parameters.maximum)},
+                         {QStringLiteral("step"), stringValue(parameters.step)},
+                         {QStringLiteral("secretTheme"), parameters.theme}});
+            });
       connect(m_session, &GameSession::secretReady, this,
               [this](quint64 questionSequence, const PlayerId &target)
               {
@@ -1691,11 +1740,11 @@ void MultiplayerHost::connectSessionSignals()
       connect(m_session, &GameSession::gameFinished, this,
               [this]()
               {
-                    sendSessionEvent(
-                          QStringLiteral("GAME_FINISHED"),
-                          {{QStringLiteral("sessionId"), m_session->sessionId()},
-                           {QStringLiteral("reason"),
-                            QStringLiteral("board-exhausted")}});
+                    sendSessionEvent(QStringLiteral("GAME_FINISHED"),
+                                     {{QStringLiteral("sessionId"),
+                                       m_session->sessionId()},
+                                      {QStringLiteral("reason"),
+                                       QStringLiteral("board-exhausted")}});
               });
 }
 
@@ -1739,8 +1788,8 @@ void MultiplayerHost::startPings()
                           static_cast<unsigned int>(std::ceil(maximumRtt)));
               });
       connect(m_session, &GameSession::playersChanged, m_pingWorker,
-              [worker = m_pingWorker, localId = m_localPlayerId](
-                    const QVector<PlayerState> &players)
+              [worker  = m_pingWorker,
+               localId = m_localPlayerId](const QVector<PlayerState> &players)
               {
                     QVector<PlayerId> remote;
                     for (const PlayerState &state : players)
@@ -1761,7 +1810,8 @@ void MultiplayerHost::stopPings()
       {
             return;
       }
-      QMetaObject::invokeMethod(m_pingWorker, "stop", Qt::BlockingQueuedConnection);
+      QMetaObject::invokeMethod(m_pingWorker, "stop",
+                                Qt::BlockingQueuedConnection);
       m_pingThread->quit();
       m_pingThread->wait();
       delete m_pingWorker;
@@ -1775,25 +1825,23 @@ void MultiplayerHost::sendPhaseSync()
 {
       if (!m_started || m_session == nullptr ||
           m_session->phase() == SessionPhase::Lobby ||
-          m_session->phase() == SessionPhase::Finished ||
-          m_session->isPaused())
+          m_session->phase() == SessionPhase::Finished || m_session->isPaused())
       {
             return;
       }
       const SessionSnapshot snapshot = m_session->snapshot();
-      sendSessionEvent(
-            QStringLiteral("PHASE_SYNC"),
-            {{QStringLiteral("phaseSeq"),
-              stringValue(snapshot.phase.phaseSequence)},
-             {QStringLiteral("phase"),
-              MultiplayerProtocol::phaseName(snapshot.phase.phase)},
-             {QStringLiteral("durationMs"),
-              stringValue(snapshot.phase.durationMs)},
-             {QStringLiteral("remainingMs"),
-              stringValue(snapshot.phase.remainingMs)},
-             {QStringLiteral("questionSeq"),
-              stringValue(snapshot.phase.questionSequence)},
-             {QStringLiteral("owner"), snapshot.phase.owner}});
+      sendSessionEvent(QStringLiteral("PHASE_SYNC"),
+                       {{QStringLiteral("phaseSeq"),
+                         stringValue(snapshot.phase.phaseSequence)},
+                        {QStringLiteral("phase"),
+                         MultiplayerProtocol::phaseName(snapshot.phase.phase)},
+                        {QStringLiteral("durationMs"),
+                         stringValue(snapshot.phase.durationMs)},
+                        {QStringLiteral("remainingMs"),
+                         stringValue(snapshot.phase.remainingMs)},
+                        {QStringLiteral("questionSeq"),
+                         stringValue(snapshot.phase.questionSequence)},
+                        {QStringLiteral("owner"), snapshot.phase.owner}});
 }
 
 void MultiplayerHost::sendSessionEvent(const QString &command,
@@ -1820,7 +1868,8 @@ QStringList MultiplayerHost::localAddresses()
       }
       if (addresses.isEmpty())
       {
-            addresses.push_back(QHostAddress(QHostAddress::LocalHost).toString());
+            addresses.push_back(
+                  QHostAddress(QHostAddress::LocalHost).toString());
       }
       return addresses;
 }

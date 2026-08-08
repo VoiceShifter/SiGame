@@ -21,6 +21,7 @@ enum class SessionPhase
       PickingQuestion,
       SecretTargetSelection,
       SecretWager,
+      FinalWager,
       ReadingQuestion,
       WaitingForReaction,
       Answering,

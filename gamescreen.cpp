@@ -77,6 +77,12 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
 {
       m_mode = mode;
       ui->setupUi(this);
+      m_boardStatusLabel = new QLabel(ui->boardPage);
+      m_boardStatusLabel->setAlignment(Qt::AlignCenter);
+      QFont boardStatusFont = m_boardStatusLabel->font();
+      boardStatusFont.setBold(true);
+      m_boardStatusLabel->setFont(boardStatusFont);
+      ui->boardPageLayout->insertWidget(0, m_boardStatusLabel);
       m_mediaPlayer = new QMediaPlayer(this);
       m_mediaPlayer->setObjectName(QStringLiteral("questionMediaPlayer"));
       m_videoWidget = new QVideoWidget(ui->questionFrame);
@@ -241,6 +247,12 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                     {
                           return;
                     }
+                    if (m_singleFinalQuestionActive &&
+                        m_phase == GamePhase::ForAllAnswering)
+                    {
+                          finishSingleFinalAnswer(false);
+                          return;
+                    }
                     m_players.front().hasPassed = true;
                     ui->passButton->setEnabled(false);
                     const bool allPlayersPassed = std::all_of(
@@ -336,58 +348,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       ui->tableWidget->setFont(tableFont);
       ui->tableWidget->verticalHeader()->setFont(tableFont);
       ui->tableWidget->clearSelection();
-      if (!m_game.rounds.empty())
-      {
-            const Round &round = m_game.rounds.front();
-            std::size_t questionCount{0};
-            for (const Theme &theme : round.themes)
-            {
-                  questionCount =
-                        std::max(questionCount, theme.questions.size());
-            }
-
-            ui->tableWidget->setColumnCount(static_cast<int>(questionCount));
-            ui->tableWidget->setRowCount(static_cast<int>(round.themes.size()));
-
-            for (std::size_t row{0}; row < round.themes.size(); ++row)
-            {
-                  const Theme &theme = round.themes[row];
-                  ui->tableWidget->setVerticalHeaderItem(
-                        static_cast<int>(row),
-                        new QTableWidgetItem(theme.name));
-
-                  for (std::size_t column{0}; column < theme.questions.size();
-                       ++column)
-                  {
-                        QPushButton *button = new QPushButton;
-                        button->setFont(tableFont);
-                        button->setText(
-                              QString::number(theme.questions[column].price));
-                        const int themeIndex    = static_cast<int>(row);
-                        const int questionIndex = static_cast<int>(column);
-                        connect(button, &QPushButton::clicked, this,
-                                [this, themeIndex, questionIndex]()
-                                {
-                                      if (m_mode == GameScreenMode::SinglePlayer)
-                                      {
-                                            emit questionSelected(themeIndex,
-                                                                  questionIndex);
-                                      }
-                                      else
-                                      {
-                                            emit questionPickRequested(
-                                                  0, themeIndex, questionIndex);
-                                      }
-                                });
-                        if (m_mode != GameScreenMode::SinglePlayer)
-                        {
-                              button->setEnabled(false);
-                        }
-                        ui->tableWidget->setCellWidget(themeIndex,
-                                                       questionIndex, button);
-                  }
-            }
-      }
+      buildBoard(0);
 
       for (uint Index{0}; Index < PlayerCount; ++Index)
       {
@@ -447,7 +408,14 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       {
             ui->pushButton_3->setEnabled(true);
             ui->pushButton_5->setEnabled(false);
-            returnToBoard();
+            if (m_game.rounds.empty())
+            {
+                  returnToBoard();
+            }
+            else
+            {
+                  skipToRound(static_cast<int>(m_game.rounds.size()) - 1);
+            }
       }
       else
       {
@@ -461,6 +429,138 @@ GameScreen::~GameScreen()
 {
       delete m_globalTimer;
       delete ui;
+}
+
+void GameScreen::buildBoard(int roundIndex)
+{
+      ui->tableWidget->setRowCount(0);
+      ui->tableWidget->setColumnCount(0);
+      m_boardRoundIndex = roundIndex;
+      if (roundIndex < 0 ||
+          roundIndex >= static_cast<int>(m_game.rounds.size()))
+      {
+            return;
+      }
+
+      const Round &round =
+            m_game.rounds[static_cast<std::size_t>(roundIndex)];
+      m_boardStatusLabel->setText(round.name);
+      std::size_t questionCount{};
+      for (const Theme &theme : round.themes)
+      {
+            questionCount = std::max(questionCount, theme.questions.size());
+      }
+      ui->tableWidget->setColumnCount(static_cast<int>(questionCount));
+      ui->tableWidget->setRowCount(static_cast<int>(round.themes.size()));
+      const QFont tableFont = ui->tableWidget->font();
+      const bool finalRound = isFinalRound(roundIndex);
+
+      for (std::size_t row = 0; row < round.themes.size(); ++row)
+      {
+            const Theme &theme = round.themes[row];
+            ui->tableWidget->setVerticalHeaderItem(
+                  static_cast<int>(row), new QTableWidgetItem(theme.name));
+            for (std::size_t column = 0; column < theme.questions.size();
+                 ++column)
+            {
+                  auto *button = new QPushButton;
+                  button->setFont(tableFont);
+                  button->setText(finalRound
+                                        ? tr("Eliminate")
+                                        : QString::number(
+                                                theme.questions[column].price));
+                  const int themeIndex = static_cast<int>(row);
+                  const int questionIndex = static_cast<int>(column);
+                  connect(button, &QPushButton::clicked, this,
+                          [this, roundIndex, themeIndex, questionIndex]()
+                          {
+                                if (m_mode == GameScreenMode::SinglePlayer)
+                                {
+                                      emit questionSelected(themeIndex,
+                                                            questionIndex);
+                                }
+                                else
+                                {
+                                      emit questionPickRequested(
+                                            roundIndex, themeIndex,
+                                            questionIndex);
+                                }
+                          });
+                  if (m_mode != GameScreenMode::SinglePlayer)
+                  {
+                        button->setEnabled(false);
+                  }
+                  ui->tableWidget->setCellWidget(themeIndex, questionIndex,
+                                                 button);
+            }
+      }
+}
+
+bool GameScreen::isFinalRound(int roundIndex) const
+{
+      return roundIndex >= 0 &&
+             roundIndex < static_cast<int>(m_game.rounds.size()) &&
+             m_game.rounds[static_cast<std::size_t>(roundIndex)]
+                         .type.compare(QStringLiteral("final"),
+                                       Qt::CaseInsensitive) == 0;
+}
+
+bool GameScreen::skipToRound(int roundIndex)
+{
+      if (m_mode != GameScreenMode::SinglePlayer || roundIndex < 0 ||
+          roundIndex >= static_cast<int>(m_game.rounds.size()))
+      {
+            return false;
+      }
+
+      m_tickTimer->stop();
+      m_progressAnimation->stop();
+      stopReactionFlash();
+      stopMediaPlayback();
+      resetAnswerInputState();
+      m_singlePlayerPaused = false;
+      m_singlePlayerTimerWasActive = false;
+      m_singlePlayerFlashWasActive = false;
+      m_pageBeforePause.clear();
+      m_singleFinalQuestionActive = false;
+      m_singleFinalEliminatorIndex = 0;
+      m_singleFinalWagers.clear();
+      m_singleFinalCorrect.clear();
+      m_forAllAnswering = false;
+      m_answerResultApplied = false;
+      m_currentThemeIndex = -1;
+      m_currentQuestionIndex = -1;
+      m_displayedPixmap = {};
+      ui->questionTextLabel->clear();
+      ui->questionMediaLabel->clear();
+      ui->questionMediaLabel->hide();
+      ui->AnswerBytton->setEnabled(false);
+      ui->passButton->setEnabled(false);
+      ui->pushButton_3->setEnabled(true);
+      ui->pushButton_5->setEnabled(false);
+      for (Player &player : m_players)
+      {
+            player.hasPassed = false;
+      }
+
+      buildBoard(roundIndex);
+      ui->gameContentStack->setCurrentWidget(ui->boardPage);
+      if (!hasAvailableQuestions())
+      {
+            advanceSinglePlayerRound();
+            return true;
+      }
+      if (isFinalRound(roundIndex) && !m_players.empty())
+      {
+            m_boardStatusLabel->setText(
+                  tr("%1 eliminates a topic").arg(m_players.front().name));
+            if (beginSingleFinalWagersIfReady())
+            {
+                  return true;
+            }
+      }
+      startPhaseTimer(GamePhase::PickingQuestion, m_questionPickDuration);
+      return true;
 }
 
 void GameScreen::setupAppealPage()
@@ -674,7 +774,15 @@ bool GameScreen::eventFilter(QObject *watched, QEvent *event)
                               std::max(0.02, currentQuestion().answerDeviation);
                         const bool isCorrect =
                               std::hypot(dx, dy) <= allowedDeviation;
-                        applyAnswerResult(isCorrect, submittedAnswer);
+                        if (m_singleFinalQuestionActive &&
+                            m_phase == GamePhase::ForAllAnswering)
+                        {
+                              finishSingleFinalAnswer(isCorrect);
+                        }
+                        else
+                        {
+                              applyAnswerResult(isCorrect, submittedAnswer);
+                        }
                   }
                   return true;
             }
@@ -727,6 +835,7 @@ void GameScreen::setProgressBarColor(GamePhase phase)
       case GamePhase::ForAllAnswering:
       case GamePhase::ShowingAnswer:
       case GamePhase::SecretWager:
+      case GamePhase::FinalWager:
             color = QStringLiteral("#9c27b0");
             break;
       case GamePhase::AppealVoting:
@@ -773,10 +882,17 @@ void GameScreen::handlePhaseTimeout()
             break;
       case GamePhase::ReadingQuestion:
             finishMediaDisplay();
-            startReactionFlash();
-            ui->AnswerBytton->setEnabled(true);
-            startPhaseTimer(GamePhase::WaitingForReaction,
-                            m_answerWaitDuration);
+            if (m_singleFinalQuestionActive)
+            {
+                  beginSingleFinalAnswers();
+            }
+            else
+            {
+                  startReactionFlash();
+                  ui->AnswerBytton->setEnabled(true);
+                  startPhaseTimer(GamePhase::WaitingForReaction,
+                                  m_answerWaitDuration);
+            }
             break;
       case GamePhase::WaitingForReaction:
       case GamePhase::Answering:
@@ -786,6 +902,30 @@ void GameScreen::handlePhaseTimeout()
             returnToBoard();
             break;
       case GamePhase::ForAllAnswering:
+            if (m_singleFinalQuestionActive)
+            {
+                  const QString answer =
+                        m_answerDialog == nullptr
+                              ? QString()
+                              : m_answerDialog->textValue();
+                  const QString normalized = answer.trimmed();
+                  const bool correct = std::any_of(
+                        currentQuestion().rightAnswers.cbegin(),
+                        currentQuestion().rightAnswers.cend(),
+                        [&normalized](const QString &rightAnswer)
+                        {
+                              return normalized.compare(
+                                           rightAnswer.trimmed(),
+                                           Qt::CaseInsensitive) == 0;
+                        });
+                  finishSingleFinalAnswer(correct);
+            }
+            break;
+      case GamePhase::FinalWager:
+            submitSingleFinalWager(m_answerDialog == nullptr
+                                         ? 0
+                                         : m_answerDialog->intValue());
+            break;
       case GamePhase::Lobby:
       case GamePhase::SecretTargetSelection:
       case GamePhase::SecretWager:
@@ -904,7 +1044,13 @@ void GameScreen::showQuestion(int themeIndex, int questionIndex)
             return;
       }
 
-      const Round &round = m_game.rounds.front();
+      if (m_boardRoundIndex < 0 ||
+          m_boardRoundIndex >= static_cast<int>(m_game.rounds.size()))
+      {
+            return;
+      }
+      const Round &round =
+            m_game.rounds[static_cast<std::size_t>(m_boardRoundIndex)];
       if (static_cast<std::size_t>(themeIndex) >= round.themes.size())
       {
             return;
@@ -921,6 +1067,13 @@ void GameScreen::showQuestion(int themeIndex, int questionIndex)
       {
             return;
       }
+      if (m_mode == GameScreenMode::SinglePlayer &&
+          isFinalRound(m_boardRoundIndex) &&
+          !m_singleFinalQuestionActive)
+      {
+            eliminateSingleFinalTheme(themeIndex);
+            return;
+      }
 
       const Question &question =
             theme.questions[static_cast<std::size_t>(questionIndex)];
@@ -932,7 +1085,8 @@ void GameScreen::showQuestion(int themeIndex, int questionIndex)
       switch (question.type)
       {
       case QuestionType::ForAll:
-            emit forAllQuestionSelected(0, themeIndex, questionIndex);
+            emit forAllQuestionSelected(m_boardRoundIndex, themeIndex,
+                                        questionIndex);
             break;
       case QuestionType::SecretPublicPrice:
             if (question.secretParameters.has_value())
@@ -940,7 +1094,7 @@ void GameScreen::showQuestion(int themeIndex, int questionIndex)
                   const SecretQuestionParameters &parameters =
                         *question.secretParameters;
                   emit secretPublicPriceQuestionSelected(
-                        0, themeIndex, questionIndex,
+                        m_boardRoundIndex, themeIndex, questionIndex,
                         parameters.selectionMode, parameters.price.minimum,
                         parameters.price.maximum, parameters.price.step,
                         parameters.theme);
@@ -949,8 +1103,8 @@ void GameScreen::showQuestion(int themeIndex, int questionIndex)
             {
                   qWarning() << "Secret public price question has no metadata";
                   emit secretPublicPriceQuestionSelected(
-                        0, themeIndex, questionIndex, QString(), 0, 0, 0,
-                        QString());
+                        m_boardRoundIndex, themeIndex, questionIndex, QString(),
+                        0, 0, 0, QString());
             }
             break;
       case QuestionType::Default:
@@ -1117,7 +1271,324 @@ void GameScreen::returnToBoard()
       m_currentThemeIndex = -1;
       m_currentQuestionIndex = -1;
       ui->gameContentStack->setCurrentWidget(ui->boardPage);
+      if (m_mode == GameScreenMode::SinglePlayer &&
+          !hasAvailableQuestions())
+      {
+            advanceSinglePlayerRound();
+            return;
+      }
+      if (m_mode == GameScreenMode::SinglePlayer &&
+          isFinalRound(m_boardRoundIndex) &&
+          beginSingleFinalWagersIfReady())
+      {
+            return;
+      }
       startPhaseTimer(GamePhase::PickingQuestion, m_questionPickDuration);
+}
+
+bool GameScreen::hasAvailableQuestions() const
+{
+      for (int row = 0; row < ui->tableWidget->rowCount(); ++row)
+      {
+            for (int column = 0; column < ui->tableWidget->columnCount();
+                 ++column)
+            {
+                  const auto *button = qobject_cast<QPushButton *>(
+                        ui->tableWidget->cellWidget(row, column));
+                  if (button != nullptr && button->isEnabled())
+                  {
+                        return true;
+                  }
+            }
+      }
+      return false;
+}
+
+void GameScreen::advanceSinglePlayerRound()
+{
+      m_singleFinalQuestionActive = false;
+      m_singleFinalWagers.clear();
+      m_singleFinalCorrect.clear();
+      int nextRound = m_boardRoundIndex + 1;
+      while (nextRound < static_cast<int>(m_game.rounds.size()))
+      {
+            buildBoard(nextRound);
+            if (ui->tableWidget->rowCount() > 0 &&
+                ui->tableWidget->columnCount() > 0)
+            {
+                  m_singleFinalEliminatorIndex = 0;
+                  if (isFinalRound(nextRound) && !m_players.empty())
+                  {
+                        m_boardStatusLabel->setText(
+                              tr("%1 eliminates a topic")
+                                    .arg(m_players.front().name));
+                  }
+                  ui->gameContentStack->setCurrentWidget(ui->boardPage);
+                  if (isFinalRound(nextRound) &&
+                      beginSingleFinalWagersIfReady())
+                  {
+                        return;
+                  }
+                  startPhaseTimer(GamePhase::PickingQuestion,
+                                  m_questionPickDuration);
+                  return;
+            }
+            ++nextRound;
+      }
+      m_tickTimer->stop();
+      m_progressAnimation->stop();
+      m_phase = GamePhase::Finished;
+      ui->progressBar->setValue(ui->progressBar->minimum());
+      ui->AnswerBytton->setEnabled(false);
+      ui->passButton->setEnabled(false);
+      ui->gameContentStack->setCurrentWidget(ui->boardPage);
+}
+
+void GameScreen::eliminateSingleFinalTheme(int themeIndex)
+{
+      if (!isFinalRound(m_boardRoundIndex) || themeIndex < 0 ||
+          themeIndex >= ui->tableWidget->rowCount())
+      {
+            return;
+      }
+      for (int question = 0; question < ui->tableWidget->columnCount();
+           ++question)
+      {
+            if (auto *button = qobject_cast<QPushButton *>(
+                      ui->tableWidget->cellWidget(themeIndex, question)))
+            {
+                  button->setEnabled(false);
+                  button->setText(QString());
+            }
+      }
+
+      if (beginSingleFinalWagersIfReady())
+      {
+            return;
+      }
+      if (!hasAvailableQuestions())
+      {
+            advanceSinglePlayerRound();
+            return;
+      }
+      if (!m_players.empty())
+      {
+            m_singleFinalEliminatorIndex =
+                  (m_singleFinalEliminatorIndex + 1) %
+                  static_cast<int>(m_players.size());
+            m_boardStatusLabel->setText(
+                  tr("%1 eliminates a topic")
+                        .arg(m_players[static_cast<std::size_t>(
+                              m_singleFinalEliminatorIndex)]
+                                   .name));
+      }
+      startPhaseTimer(GamePhase::PickingQuestion, m_questionPickDuration);
+}
+
+bool GameScreen::beginSingleFinalWagersIfReady()
+{
+      int remainingThemes = 0;
+      int finalTheme = -1;
+      int finalQuestion = -1;
+      for (int theme = 0; theme < ui->tableWidget->rowCount(); ++theme)
+      {
+            for (int question = 0;
+                 question < ui->tableWidget->columnCount(); ++question)
+            {
+                  const auto *button = qobject_cast<QPushButton *>(
+                        ui->tableWidget->cellWidget(theme, question));
+                  if (button != nullptr && button->isEnabled())
+                  {
+                        ++remainingThemes;
+                        finalTheme = theme;
+                        finalQuestion = question;
+                        break;
+                  }
+            }
+      }
+      if (remainingThemes != 1)
+      {
+            return false;
+      }
+      beginSingleFinalWagers(finalTheme, finalQuestion);
+      return true;
+}
+
+void GameScreen::beginSingleFinalWagers(int themeIndex, int questionIndex)
+{
+      if (m_players.empty())
+      {
+            advanceSinglePlayerRound();
+            return;
+      }
+      m_currentThemeIndex = themeIndex;
+      m_currentQuestionIndex = questionIndex;
+      if (auto *button = qobject_cast<QPushButton *>(
+                ui->tableWidget->cellWidget(themeIndex, questionIndex)))
+      {
+            button->setEnabled(false);
+      }
+      m_singleFinalWagerPlayerIndex = 0;
+      m_singleFinalWagers.assign(m_players.size(), 0);
+      m_singleFinalCorrect.assign(m_players.size(), false);
+      const Round &round =
+            m_game.rounds[static_cast<std::size_t>(m_boardRoundIndex)];
+      m_boardStatusLabel->setText(
+            tr("Final topic: %1")
+                  .arg(round.themes[static_cast<std::size_t>(themeIndex)].name));
+      promptSingleFinalWager();
+}
+
+void GameScreen::promptSingleFinalWager()
+{
+      if (m_singleFinalWagerPlayerIndex >=
+          static_cast<int>(m_players.size()))
+      {
+            showSingleFinalQuestion();
+            return;
+      }
+      startPhaseTimer(GamePhase::FinalWager, m_answerDuration);
+      m_answerDialog = new QInputDialog(this);
+      m_answerDialog->setAttribute(Qt::WA_DeleteOnClose);
+      m_answerDialog->setInputMode(QInputDialog::IntInput);
+      m_answerDialog->setWindowTitle(tr("Final wager"));
+      const Player &player =
+            m_players[static_cast<std::size_t>(m_singleFinalWagerPlayerIndex)];
+      const int maximum =
+            singlePlayerWagerLimit(m_singleFinalWagerPlayerIndex);
+      m_answerDialog->setLabelText(
+            tr("%1, choose a wager (0–%2):").arg(player.name).arg(maximum));
+      m_answerDialog->setIntRange(0, maximum);
+      m_answerDialog->setIntValue(0);
+      connect(m_answerDialog, &QInputDialog::intValueSelected, this,
+              &GameScreen::submitSingleFinalWager);
+      connect(m_answerDialog, &QDialog::rejected, this,
+              [this]() { submitSingleFinalWager(0); });
+      m_answerDialog->open();
+}
+
+void GameScreen::submitSingleFinalWager(int amount)
+{
+      if (m_phase != GamePhase::FinalWager ||
+          m_singleFinalWagerPlayerIndex < 0 ||
+          m_singleFinalWagerPlayerIndex >=
+                static_cast<int>(m_players.size()))
+      {
+            return;
+      }
+      const int maximum =
+            singlePlayerWagerLimit(m_singleFinalWagerPlayerIndex);
+      m_singleFinalWagers[static_cast<std::size_t>(
+            m_singleFinalWagerPlayerIndex)] = std::clamp(amount, 0, maximum);
+      if (m_answerDialog != nullptr)
+      {
+            disconnect(m_answerDialog, nullptr, this, nullptr);
+            m_answerDialog->close();
+            m_answerDialog = nullptr;
+      }
+      ++m_singleFinalWagerPlayerIndex;
+      QTimer::singleShot(0, this, &GameScreen::promptSingleFinalWager);
+}
+
+void GameScreen::showSingleFinalQuestion()
+{
+      m_singleFinalQuestionActive = true;
+      m_phase = GamePhase::PickingQuestion;
+      if (auto *button = qobject_cast<QPushButton *>(
+                ui->tableWidget->cellWidget(m_currentThemeIndex,
+                                             m_currentQuestionIndex)))
+      {
+            button->setEnabled(true);
+      }
+      showQuestion(m_currentThemeIndex, m_currentQuestionIndex);
+}
+
+void GameScreen::beginSingleFinalAnswers()
+{
+      if (m_players.empty())
+      {
+            showAnswer();
+            return;
+      }
+      m_singleFinalAnswerPlayerIndex = 0;
+      m_forAllAnswering = true;
+      promptSingleFinalAnswer();
+}
+
+void GameScreen::promptSingleFinalAnswer()
+{
+      if (m_singleFinalAnswerPlayerIndex >=
+          static_cast<int>(m_players.size()))
+      {
+            for (std::size_t index = 0; index < m_players.size(); ++index)
+            {
+                  Player &player = m_players[index];
+                  const int wager = m_singleFinalWagers[index];
+                  player.balance +=
+                        m_singleFinalCorrect[index] ? wager : -wager;
+                  player.glow = m_singleFinalCorrect[index]
+                                      ? PlayerGlow::Correct
+                                      : PlayerGlow::Incorrect;
+                  applyPlayerGlow(player.avatarLabel, player.glow);
+                  updateBalanceLabel(player);
+            }
+            m_forAllAnswering = false;
+            showAnswer();
+            return;
+      }
+      m_answerResultApplied = false;
+      m_submittedPoint.reset();
+      ui->answerOptionsTable->setCurrentCell(-1, -1);
+      ui->answerOptionsTable->clearSelection();
+      const unsigned int duration =
+            currentQuestion().answerDuration > 0
+                  ? mediaDurationMilliseconds(currentQuestion().answerDuration)
+                  : m_answerDuration;
+      startPhaseTimer(GamePhase::ForAllAnswering, duration);
+      openAnswerInput();
+}
+
+void GameScreen::finishSingleFinalAnswer(bool correct)
+{
+      if (!m_singleFinalQuestionActive ||
+          m_phase != GamePhase::ForAllAnswering ||
+          m_singleFinalAnswerPlayerIndex < 0 ||
+          m_singleFinalAnswerPlayerIndex >=
+                static_cast<int>(m_players.size()))
+      {
+            return;
+      }
+      const std::size_t index =
+            static_cast<std::size_t>(m_singleFinalAnswerPlayerIndex);
+      m_singleFinalCorrect[index] = correct;
+      if (m_answerDialog != nullptr)
+      {
+            disconnect(m_answerDialog, nullptr, this, nullptr);
+            m_answerDialog->close();
+            m_answerDialog = nullptr;
+      }
+      m_pointInputEnabled = false;
+      ui->answerOptionsTable->viewport()->setAttribute(
+            Qt::WA_TransparentForMouseEvents, true);
+      ++m_singleFinalAnswerPlayerIndex;
+      QTimer::singleShot(0, this, &GameScreen::promptSingleFinalAnswer);
+}
+
+int GameScreen::singlePlayerWagerLimit(int playerIndex) const
+{
+      if (playerIndex < 0 ||
+          playerIndex >= static_cast<int>(m_players.size()))
+      {
+            return 0;
+      }
+      const qint64 balance =
+            m_players[static_cast<std::size_t>(playerIndex)].balance;
+      const quint64 magnitude =
+            balance < 0 ? static_cast<quint64>(-balance)
+                        : static_cast<quint64>(balance);
+      return static_cast<int>(std::min<quint64>(
+            magnitude,
+            static_cast<quint64>(std::numeric_limits<int>::max())));
 }
 
 const Question &GameScreen::currentQuestion() const
@@ -1127,7 +1598,7 @@ const Question &GameScreen::currentQuestion() const
       {
             return *m_networkQuestion;
       }
-      return m_game.rounds.front()
+      return m_game.rounds[static_cast<std::size_t>(m_boardRoundIndex)]
             .themes[static_cast<std::size_t>(m_currentThemeIndex)]
             .questions[static_cast<std::size_t>(m_currentQuestionIndex)];
 }
@@ -1135,9 +1606,11 @@ const Question &GameScreen::currentQuestion() const
 void GameScreen::pickRandomQuestion()
 {
       std::vector<std::pair<int, int>> availableQuestions;
-      if (!m_game.rounds.empty())
+      if (m_boardRoundIndex >= 0 &&
+          m_boardRoundIndex < static_cast<int>(m_game.rounds.size()))
       {
-            const Round &round = m_game.rounds.front();
+            const Round &round =
+                  m_game.rounds[static_cast<std::size_t>(m_boardRoundIndex)];
             for (std::size_t themeIndex = 0;
                  themeIndex < round.themes.size(); ++themeIndex)
             {
@@ -1161,9 +1634,7 @@ void GameScreen::pickRandomQuestion()
 
       if (availableQuestions.empty())
       {
-            m_tickTimer->stop();
-            ui->progressBar->setValue(0);
-            ui->gameContentStack->setCurrentWidget(ui->boardPage);
+            advanceSinglePlayerRound();
             return;
       }
 
@@ -1515,7 +1986,21 @@ void GameScreen::openTextAnswerDialog()
       m_answerDialog->setAttribute(Qt::WA_DeleteOnClose);
       m_answerDialog->setInputMode(QInputDialog::TextInput);
       m_answerDialog->setWindowTitle(tr("Answer question"));
-      m_answerDialog->setLabelText(tr("Enter your answer:"));
+      if (m_mode == GameScreenMode::SinglePlayer &&
+          m_singleFinalQuestionActive &&
+          m_singleFinalAnswerPlayerIndex >= 0 &&
+          m_singleFinalAnswerPlayerIndex < static_cast<int>(m_players.size()))
+      {
+            m_answerDialog->setLabelText(
+                  tr("%1, enter your answer:")
+                        .arg(m_players[static_cast<std::size_t>(
+                              m_singleFinalAnswerPlayerIndex)]
+                                   .name));
+      }
+      else
+      {
+            m_answerDialog->setLabelText(tr("Enter your answer:"));
+      }
       connect(m_answerDialog, &QInputDialog::textValueSelected, this,
               &GameScreen::handleSubmittedAnswer);
       connect(m_answerDialog, &QInputDialog::textValueChanged, this,
@@ -1598,6 +2083,12 @@ void GameScreen::handleSubmittedAnswer(const QString &answer)
                   return normalizedAnswer.compare(rightAnswer.trimmed(),
                                                   Qt::CaseInsensitive) == 0;
             });
+      if (m_singleFinalQuestionActive &&
+          m_phase == GamePhase::ForAllAnswering)
+      {
+            finishSingleFinalAnswer(isCorrect);
+            return;
+      }
       if (currentQuestion().answerType == AnswerType::Select)
       {
             const QColor resultColor(
@@ -1647,7 +2138,12 @@ void GameScreen::handleAnswerDeclined()
             }
             return;
       }
-      if (m_phase == GamePhase::Answering && !m_answerResultApplied)
+      if (m_singleFinalQuestionActive &&
+          m_phase == GamePhase::ForAllAnswering)
+      {
+            finishSingleFinalAnswer(false);
+      }
+      else if (m_phase == GamePhase::Answering && !m_answerResultApplied)
       {
             applyAnswerResult(false, QString());
       }
@@ -2145,11 +2641,32 @@ void GameScreen::applyPhase(const PhaseState &phase)
       else if (phase.phase == SessionPhase::PickingQuestion)
       {
             m_pickerId = phase.owner;
+            if (isFinalRound(m_networkBoard.round))
+            {
+                  QString pickerName = m_pickerId;
+                  for (const PlayerState &state : m_networkPlayers)
+                  {
+                        if (state.id == m_pickerId)
+                        {
+                              pickerName = state.nickname;
+                              break;
+                        }
+                  }
+                  m_boardStatusLabel->setText(
+                        tr("%1 eliminates a topic").arg(pickerName));
+            }
+            ui->gameContentStack->setCurrentWidget(ui->boardPage);
+      }
+      else if (phase.phase == SessionPhase::FinalWager)
+      {
+            m_boardStatusLabel->setText(tr("Waiting for final wagers"));
+            applyNetworkBoard(m_networkBoard);
             ui->gameContentStack->setCurrentWidget(ui->boardPage);
       }
       else if (phase.phase != SessionPhase::Lobby &&
                phase.phase != SessionPhase::SecretTargetSelection &&
-               phase.phase != SessionPhase::SecretWager)
+               phase.phase != SessionPhase::SecretWager &&
+               phase.phase != SessionPhase::FinalWager)
       {
             ui->gameContentStack->setCurrentWidget(ui->questionPage);
       }
@@ -2174,6 +2691,15 @@ void GameScreen::applyPhase(const PhaseState &phase)
           m_answerOwnerId == m_localPlayerId &&
           m_networkQuestion.has_value() && !m_networkAnswerSubmitted &&
           !m_networkAnswerInputOpened)
+      {
+            m_networkAnswerInputOpened = true;
+            ui->AnswerBytton->setEnabled(false);
+            openAnswerInput();
+      }
+      else if (phase.phase == SessionPhase::ForAllAnswering &&
+               isFinalRound(m_boardRoundIndex) && m_canAnswer &&
+               m_networkQuestion.has_value() && !m_networkAnswerSubmitted &&
+               !m_networkAnswerInputOpened)
       {
             m_networkAnswerInputOpened = true;
             ui->AnswerBytton->setEnabled(false);
@@ -2455,7 +2981,9 @@ void GameScreen::applyWagerPrompt(const SecretWagerParameters &parameters)
       auto *dialog = new QInputDialog(this);
       dialog->setAttribute(Qt::WA_DeleteOnClose);
       dialog->setInputMode(QInputDialog::IntInput);
-      dialog->setWindowTitle(tr("Secret wager"));
+      dialog->setWindowTitle(m_phase == SessionPhase::FinalWager
+                                   ? tr("Final wager")
+                                   : tr("Secret wager"));
       const QString label = parameters.theme.isEmpty()
                                   ? tr("Choose a wager:")
                                   : tr("%1\nChoose a wager:").arg(parameters.theme);
@@ -2504,6 +3032,15 @@ void GameScreen::applyNetworkQuestion(
 void GameScreen::applyNetworkBoard(const BoardState &board)
 {
       m_networkBoard = board;
+      if (board.round < 0 ||
+          board.round >= static_cast<int>(m_game.rounds.size()))
+      {
+            return;
+      }
+      if (m_boardRoundIndex != board.round)
+      {
+            buildBoard(board.round);
+      }
       QSet<QString> used;
       for (const BoardCell &cell : board.cells)
       {
@@ -2515,14 +3052,13 @@ void GameScreen::applyNetworkBoard(const BoardState &board)
                                     .arg(cell.question));
             }
       }
-      if (m_game.rounds.empty())
-      {
-            return;
-      }
-      const Round &round = m_game.rounds.front();
+      const Round &round =
+            m_game.rounds[static_cast<std::size_t>(board.round)];
+      const bool finalRound = isFinalRound(board.round);
       for (int theme = 0; theme < static_cast<int>(round.themes.size()); ++theme)
       {
-            const Theme &currentTheme = round.themes[static_cast<std::size_t>(theme)];
+            const Theme &currentTheme =
+                  round.themes[static_cast<std::size_t>(theme)];
             for (int question = 0;
                  question < static_cast<int>(currentTheme.questions.size());
                  ++question)
@@ -2534,13 +3070,20 @@ void GameScreen::applyNetworkBoard(const BoardState &board)
                         continue;
                   }
                   const bool isUsed = used.contains(
-                        QStringLiteral("0:%1:%2").arg(theme).arg(question));
-                  button->setText(isUsed
-                                        ? QString()
-                                        : QString::number(
-                                              currentTheme.questions[static_cast<std::size_t>(
-                                                    question)]
-                                                    .price));
+                        QStringLiteral("%1:%2:%3")
+                              .arg(board.round)
+                              .arg(theme)
+                              .arg(question));
+                  button->setText(
+                        isUsed
+                              ? QString()
+                              : (finalRound
+                                       ? tr("Eliminate")
+                                       : QString::number(
+                                               currentTheme.questions
+                                                     [static_cast<std::size_t>(
+                                                           question)]
+                                                           .price)));
                   button->setEnabled(!isUsed &&
                                      m_phase == SessionPhase::PickingQuestion &&
                                      m_pickerId == m_localPlayerId);

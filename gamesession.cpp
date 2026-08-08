@@ -67,11 +67,19 @@ bool GameSession::addPlayer(const PlayerState &state)
                                     {m_questionSequence, false, false, false,
                                      false, 0});
             if (m_phase == SessionPhase::ForAllAnswering && copy.connected &&
-                copy.ready)
+                copy.ready &&
+                (!currentQuestionIsFinal() ||
+                 m_finalWagerExpected.contains(copy.id)))
             {
                   m_forAllExpected.insert(copy.id);
                   m_forAllAttempts.insert(copy.id, {});
             }
+      }
+      if (m_phase == SessionPhase::FinalWager && copy.connected && copy.ready &&
+          !m_finalWagerExpected.contains(copy.id))
+      {
+            m_finalWagerExpected.insert(copy.id);
+            emit secretWagerPrompt(copy.id, finalWagerParameters(copy.id));
       }
       emitPlayersChanged();
       return true;
@@ -85,6 +93,14 @@ bool GameSession::setPlayerConnected(const PlayerId &playerId, bool connected)
             return state != nullptr;
       }
       state->connected = connected;
+      if (connected && state->ready &&
+          m_phase == SessionPhase::FinalWager &&
+          !m_finalWagerExpected.contains(playerId))
+      {
+            m_finalWagerExpected.insert(playerId);
+            emit secretWagerPrompt(playerId,
+                                   finalWagerParameters(playerId));
+      }
       emitPlayersChanged();
       return true;
 }
@@ -98,10 +114,20 @@ bool GameSession::setPlayerReady(const PlayerId &playerId, bool ready)
       }
       state->ready = ready;
       if (ready && m_phase == SessionPhase::ForAllAnswering &&
-          m_questionSequence != 0 && !m_forAllExpected.contains(playerId))
+          m_questionSequence != 0 && !m_forAllExpected.contains(playerId) &&
+          (!currentQuestionIsFinal() ||
+           m_finalWagerExpected.contains(playerId)))
       {
             m_forAllExpected.insert(playerId);
             m_forAllAttempts.insert(playerId, {});
+      }
+      if (ready && state->connected &&
+          m_phase == SessionPhase::FinalWager &&
+          !m_finalWagerExpected.contains(playerId))
+      {
+            m_finalWagerExpected.insert(playerId);
+            emit secretWagerPrompt(playerId,
+                                   finalWagerParameters(playerId));
       }
       emitPlayersChanged();
       return true;
@@ -185,12 +211,14 @@ BoardState GameSession::boardState() const
 {
       BoardState state;
       state.boardSequence = m_boardSequence;
-      state.round = 0;
-      if (m_game.rounds.empty())
+      state.round = m_boardRound;
+      if (m_boardRound < 0 ||
+          m_boardRound >= static_cast<int>(m_game.rounds.size()))
       {
             return state;
       }
-      const Round &round = m_game.rounds.front();
+      const Round &round =
+            m_game.rounds[static_cast<std::size_t>(m_boardRound)];
       for (int theme = 0; theme < static_cast<int>(round.themes.size()); ++theme)
       {
             const Theme &currentTheme = round.themes[static_cast<std::size_t>(theme)];
@@ -198,9 +226,10 @@ BoardState GameSession::boardState() const
                  question < static_cast<int>(currentTheme.questions.size());
                  ++question)
             {
-                  state.cells.push_back({0, theme, question,
-                                         m_usedCells.contains(cellKey(0, theme,
-                                                                       question))});
+                  state.cells.push_back(
+                        {m_boardRound, theme, question,
+                         m_usedCells.contains(
+                               cellKey(m_boardRound, theme, question))});
             }
       }
       return state;
@@ -267,6 +296,35 @@ SecretWagerParameters GameSession::secretWagerParameters() const
       return parameters;
 }
 
+SecretWagerParameters GameSession::finalWagerParameters(
+      const PlayerId &playerId) const
+{
+      SecretWagerParameters parameters;
+      parameters.maximum = finalWagerLimit(playerId);
+      parameters.step = 1;
+      if (m_boardRound >= 0 &&
+          m_boardRound < static_cast<int>(m_game.rounds.size()) &&
+          m_currentTheme >= 0)
+      {
+            const Round &round =
+                  m_game.rounds[static_cast<std::size_t>(m_boardRound)];
+            if (m_currentTheme < static_cast<int>(round.themes.size()))
+            {
+                  parameters.theme =
+                        round.themes[static_cast<std::size_t>(m_currentTheme)]
+                              .name;
+            }
+      }
+      return parameters;
+}
+
+bool GameSession::isFinalWagerPending(const PlayerId &playerId) const
+{
+      return m_phase == SessionPhase::FinalWager &&
+             m_finalWagerExpected.contains(playerId) &&
+             !m_finalWagers.contains(playerId);
+}
+
 bool GameSession::hasActiveQuestion() const
 {
       return currentQuestion() != nullptr && m_questionSequence != 0;
@@ -298,6 +356,71 @@ void GameSession::startGame()
       beginPicking();
 }
 
+bool GameSession::skipToRound(int roundIndex)
+{
+      if (roundIndex < 0 ||
+          roundIndex >= static_cast<int>(m_game.rounds.size()))
+      {
+            return false;
+      }
+
+      m_timer.stop();
+      m_paused = false;
+      m_phaseDuration = 0;
+      m_remainingMs = 0;
+      m_deadlineMs = m_clock.elapsed();
+      m_boardRound = roundIndex;
+      m_announcedRound = -1;
+      const QString prefix = QStringLiteral("%1:").arg(roundIndex);
+      for (auto iterator = m_usedCells.begin(); iterator != m_usedCells.end();)
+      {
+            if (iterator->startsWith(prefix))
+            {
+                  iterator = m_usedCells.erase(iterator);
+            }
+            else
+            {
+                  ++iterator;
+            }
+      }
+
+      m_currentRound = -1;
+      m_currentTheme = -1;
+      m_currentQuestion = -1;
+      m_answerOwner.clear();
+      m_secretTarget.clear();
+      m_nextPicker.clear();
+      m_secretWager = 0;
+      m_finalQuestionActive = false;
+      m_presentation.reset();
+      m_lastReveal.reset();
+      m_reactionClaims.clear();
+      m_forAllExpected.clear();
+      m_forAllAttempts.clear();
+      m_finalWagerExpected.clear();
+      m_finalWagers.clear();
+      m_appeal.reset();
+      m_appealVoters.clear();
+      m_votedAppeal.clear();
+      resetQuestionState();
+      for (PlayerState &state : m_players)
+      {
+            state.isPicker = false;
+      }
+      ++m_boardSequence;
+
+      if (m_started)
+      {
+            beginPicking();
+      }
+      else
+      {
+            emitBoardChanged();
+            emitPlayersChanged();
+      }
+      return true;
+}
+
 void GameSession::selectQuestion(PlayerId playerId, int round, int theme,
                                  int question, quint64 actionId)
 {
@@ -317,6 +440,11 @@ void GameSession::selectQuestion(PlayerId playerId, int round, int theme,
       {
             reject(playerId, QStringLiteral("QUESTION_UNAVAILABLE"),
                    QStringLiteral("The selected question is unavailable"));
+            return;
+      }
+      if (currentRoundIsFinal() && !m_finalQuestionActive)
+      {
+            eliminateFinalTheme(playerId, theme, actionId);
             return;
       }
       if (!acceptAction(playerId, actionId))
@@ -434,6 +562,38 @@ void GameSession::submitSecretWager(PlayerId target, int amount,
                                     quint64 questionSequence,
                                     quint64 actionId)
 {
+      if (m_phase == SessionPhase::FinalWager)
+      {
+            if (!requireSequence(target, questionSequence, m_phaseSequence))
+            {
+                  reject(target, QStringLiteral("STALE_SEQUENCE"),
+                         QStringLiteral("The final question sequence is stale"));
+                  return;
+            }
+            if (!m_finalWagerExpected.contains(target) ||
+                m_finalWagers.contains(target))
+            {
+                  reject(target, QStringLiteral("DUPLICATE_ACTION"),
+                         QStringLiteral("This player already submitted a wager"));
+                  return;
+            }
+            if (amount < 0 || amount > finalWagerLimit(target))
+            {
+                  reject(target, QStringLiteral("INVALID_WAGER"),
+                         QStringLiteral("The wager exceeds the player's balance magnitude"));
+                  return;
+            }
+            if (!acceptAction(target, actionId))
+            {
+                  return;
+            }
+            m_finalWagers.insert(target, amount);
+            if (m_finalWagers.size() == m_finalWagerExpected.size())
+            {
+                  startFinalQuestion();
+            }
+            return;
+      }
       if (m_phase != SessionPhase::SecretWager || target != m_secretTarget)
       {
             reject(target, QStringLiteral("WRONG_PHASE"),
@@ -965,17 +1125,19 @@ bool GameSession::hasRemainingEligiblePlayers() const
 
 bool GameSession::isQuestionAvailable(int round, int theme, int question) const
 {
-      if (round != 0 || round < 0 || theme < 0 || question < 0 ||
-          m_game.rounds.empty())
+      if (round != m_boardRound || round < 0 || theme < 0 || question < 0 ||
+          round >= static_cast<int>(m_game.rounds.size()))
       {
             return false;
       }
-      const Round &currentRound = m_game.rounds.front();
+      const Round &currentRound =
+            m_game.rounds[static_cast<std::size_t>(round)];
       if (theme >= static_cast<int>(currentRound.themes.size()))
       {
             return false;
       }
-      const Theme &currentTheme = currentRound.themes[static_cast<std::size_t>(theme)];
+      const Theme &currentTheme =
+            currentRound.themes[static_cast<std::size_t>(theme)];
       if (question >= static_cast<int>(currentTheme.questions.size()))
       {
             return false;
@@ -1064,9 +1226,23 @@ void GameSession::handleTimeout()
             }
             break;
       }
+      case SessionPhase::FinalWager:
+            for (const PlayerId &playerId : m_finalWagerExpected)
+            {
+                  if (!m_finalWagers.contains(playerId))
+                  {
+                        m_finalWagers.insert(playerId, 0);
+                  }
+            }
+            startFinalQuestion();
+            break;
       case SessionPhase::ReadingQuestion:
-            if (currentQuestion() != nullptr &&
-                currentQuestion()->type == QuestionType::ForAll)
+            if (currentQuestionIsFinal())
+            {
+                  beginForAllAnswering();
+            }
+            else if (currentQuestion() != nullptr &&
+                     currentQuestion()->type == QuestionType::ForAll)
             {
                   beginForAllAnswering();
             }
@@ -1121,10 +1297,25 @@ void GameSession::handleTimeout()
 
 void GameSession::beginPicking()
 {
-      if (m_game.rounds.empty() || boardState().cells.isEmpty())
+      if (m_boardRound < 0 ||
+          m_boardRound >= static_cast<int>(m_game.rounds.size()) ||
+          boardState().cells.isEmpty())
       {
-            m_phase = SessionPhase::Finished;
-            emit gameFinished();
+            advanceRoundOrFinish();
+            return;
+      }
+      if (currentRoundIsFinal() && remainingFinalThemeCount() <= 1)
+      {
+            const QPair<int, int> finalQuestion = remainingFinalQuestion();
+            if (finalQuestion.first < 0)
+            {
+                  advanceRoundOrFinish();
+            }
+            else
+            {
+                  beginFinalWagering(finalQuestion.first,
+                                     finalQuestion.second);
+            }
             return;
       }
       if (!isConnected(m_currentPicker))
@@ -1138,6 +1329,11 @@ void GameSession::beginPicking()
       for (PlayerState &state : m_players)
       {
             state.isPicker = state.id == m_currentPicker;
+      }
+      if (m_announcedRound != m_boardRound)
+      {
+            m_announcedRound = m_boardRound;
+            emit roundStarted(m_boardRound, m_currentPicker);
       }
       emit pickerChanged(m_currentPicker);
       emitBoardChanged();
@@ -1153,31 +1349,163 @@ void GameSession::selectRandomQuestion()
             m_currentPicker = chooseRandomConnectedPlayer();
       }
       QVector<QPair<int, int>> available;
-      if (!m_game.rounds.empty())
+      if (m_boardRound >= 0 &&
+          m_boardRound < static_cast<int>(m_game.rounds.size()))
       {
-            const Round &round = m_game.rounds.front();
-            for (int theme = 0; theme < static_cast<int>(round.themes.size()); ++theme)
+            const Round &round =
+                  m_game.rounds[static_cast<std::size_t>(m_boardRound)];
+            for (int theme = 0; theme < static_cast<int>(round.themes.size());
+                 ++theme)
             {
-                  const Theme &currentTheme = round.themes[static_cast<std::size_t>(theme)];
+                  const Theme &currentTheme =
+                        round.themes[static_cast<std::size_t>(theme)];
                   for (int question = 0;
                        question < static_cast<int>(currentTheme.questions.size());
                        ++question)
                   {
-                        if (isQuestionAvailable(0, theme, question))
+                        if (isQuestionAvailable(m_boardRound, theme, question))
                         {
                               available.push_back({theme, question});
+                              if (currentRoundIsFinal())
+                              {
+                                    break;
+                              }
                         }
                   }
             }
       }
       if (available.isEmpty() || m_currentPicker.isEmpty())
       {
-            beginNextQuestion();
+            advanceRoundOrFinish();
             return;
       }
       const int index = QRandomGenerator::global()->bounded(available.size());
-      selectQuestion(m_currentPicker, 0, available[index].first,
+      selectQuestion(m_currentPicker, m_boardRound, available[index].first,
                      available[index].second);
+}
+
+void GameSession::eliminateFinalTheme(const PlayerId &playerId, int theme,
+                                      quint64 actionId)
+{
+      if (!acceptAction(playerId, actionId) || !currentRoundIsFinal())
+      {
+            return;
+      }
+      const Round &round =
+            m_game.rounds[static_cast<std::size_t>(m_boardRound)];
+      if (theme < 0 || theme >= static_cast<int>(round.themes.size()))
+      {
+            return;
+      }
+      const Theme &eliminated = round.themes[static_cast<std::size_t>(theme)];
+      for (int question = 0;
+           question < static_cast<int>(eliminated.questions.size()); ++question)
+      {
+            m_usedCells.insert(cellKey(m_boardRound, theme, question));
+      }
+      ++m_boardSequence;
+      emitBoardChanged();
+
+      if (remainingFinalThemeCount() <= 1)
+      {
+            const QPair<int, int> finalQuestion = remainingFinalQuestion();
+            if (finalQuestion.first < 0)
+            {
+                  advanceRoundOrFinish();
+            }
+            else
+            {
+                  beginFinalWagering(finalQuestion.first,
+                                     finalQuestion.second);
+            }
+            return;
+      }
+      m_currentPicker = nextConnectedPlayer(playerId);
+      beginPicking();
+}
+
+void GameSession::beginFinalWagering(int theme, int question)
+{
+      if (!currentRoundIsFinal() ||
+          !isQuestionAvailable(m_boardRound, theme, question))
+      {
+            advanceRoundOrFinish();
+            return;
+      }
+      ++m_questionSequence;
+      m_currentRound = m_boardRound;
+      m_currentTheme = theme;
+      m_currentQuestion = question;
+      m_answerOwner.clear();
+      m_secretTarget.clear();
+      m_nextPicker.clear();
+      m_presentation.reset();
+      m_lastReveal.reset();
+      m_finalQuestionActive = true;
+      m_finalWagerExpected.clear();
+      m_finalWagers.clear();
+      resetQuestionState();
+      for (PlayerState &state : m_players)
+      {
+            state.isPicker = false;
+            if (state.connected && state.ready)
+            {
+                  m_finalWagerExpected.insert(state.id);
+            }
+      }
+      if (m_finalWagerExpected.isEmpty())
+      {
+            advanceRoundOrFinish();
+            return;
+      }
+      startPhase(SessionPhase::FinalWager, m_config.answerDurationMs);
+      emitPlayersChanged();
+      for (const PlayerState &state : m_players)
+      {
+            if (m_finalWagerExpected.contains(state.id))
+            {
+                  emit secretWagerPrompt(state.id,
+                                         finalWagerParameters(state.id));
+            }
+      }
+}
+
+void GameSession::startFinalQuestion()
+{
+      if (m_phase != SessionPhase::FinalWager || !currentQuestionIsFinal())
+      {
+            return;
+      }
+      m_presentation = makePresentation();
+      if (m_presentation.has_value())
+      {
+            emit questionStarted(*m_presentation);
+      }
+      startPhase(SessionPhase::ReadingQuestion, questionReadingDuration());
+}
+
+void GameSession::advanceRoundOrFinish()
+{
+      m_timer.stop();
+      if (currentRoundIsFinal() ||
+          m_boardRound + 1 >= static_cast<int>(m_game.rounds.size()))
+      {
+            m_phase = SessionPhase::Finished;
+            m_remainingMs = 0;
+            emitPlayersChanged();
+            emit gameFinished();
+            return;
+      }
+      ++m_boardRound;
+      ++m_boardSequence;
+      m_currentRound = -1;
+      m_currentTheme = -1;
+      m_currentQuestion = -1;
+      m_finalQuestionActive = false;
+      m_finalWagerExpected.clear();
+      m_finalWagers.clear();
+      emitBoardChanged();
+      beginPicking();
 }
 
 void GameSession::beginReaction()
@@ -1240,7 +1568,9 @@ void GameSession::beginForAllAnswering()
       m_forAllAttempts.clear();
       for (const PlayerState &state : m_players)
       {
-            if (state.connected)
+            if ((currentQuestionIsFinal() &&
+                 m_finalWagerExpected.contains(state.id)) ||
+                (!currentQuestionIsFinal() && state.connected))
             {
                   m_forAllExpected.insert(state.id);
                   m_forAllAttempts.insert(state.id, {});
@@ -1281,7 +1611,9 @@ void GameSession::finishForAll()
                   attempt.submitted = true;
             }
             const bool correct = attempt.submitted && attempt.correct;
-            const int amount = question->price;
+            const int amount = currentQuestionIsFinal()
+                                     ? m_finalWagers.value(id, 0)
+                                     : question->price;
             PlayerState *state = player(id);
             if (state == nullptr)
             {
@@ -1313,7 +1645,7 @@ void GameSession::finishForAll()
                                       0,
                                       false});
       }
-      if (!correctPlayers.isEmpty())
+      if (!currentQuestionIsFinal() && !correctPlayers.isEmpty())
       {
             result.nextPicker = correctPlayers[QRandomGenerator::global()->bounded(
                   correctPlayers.size())];
@@ -1342,7 +1674,10 @@ void GameSession::submitAnswerInternal(const PlayerId &playerId,
             attempt.submitted = true;
             m_forAllAttempts.insert(playerId, attempt);
             m_questionStates[playerId].submitted = true;
-            m_questionStates[playerId].effectiveAmount = question->price;
+            m_questionStates[playerId].effectiveAmount =
+                  currentQuestionIsFinal()
+                        ? m_finalWagers.value(playerId, 0)
+                        : question->price;
             if (PlayerState *state = player(playerId))
             {
                   state->hasAnsweredForAll = true;
@@ -1446,7 +1781,14 @@ void GameSession::revealAnswer()
             beginNextQuestion();
             return;
       }
-      chooseNextPickerIfNeeded();
+      if (currentQuestionIsFinal())
+      {
+            m_nextPicker.clear();
+      }
+      else
+      {
+            chooseNextPickerIfNeeded();
+      }
       const PlayerId revealedAnswerOwner = m_answerOwner;
       m_answerOwner.clear();
       AnswerReveal reveal = makeReveal();
@@ -1459,6 +1801,7 @@ void GameSession::revealAnswer()
 
 void GameSession::beginNextQuestion()
 {
+      const bool finalQuestion = currentQuestionIsFinal();
       m_timer.stop();
       for (PlayerState &state : m_players)
       {
@@ -1489,14 +1832,11 @@ void GameSession::beginNextQuestion()
       m_currentTheme = -1;
       m_currentQuestion = -1;
       const BoardState board = boardState();
-      if (board.cells.isEmpty() ||
+      if (finalQuestion || board.cells.isEmpty() ||
           std::none_of(board.cells.cbegin(), board.cells.cend(),
                        [](const BoardCell &cell) { return !cell.used; }))
       {
-            m_phase = SessionPhase::Finished;
-            m_remainingMs = 0;
-            emitPlayersChanged();
-            emit gameFinished();
+            advanceRoundOrFinish();
             return;
       }
       beginPicking();
@@ -1528,7 +1868,7 @@ void GameSession::finishAppeal(bool accepted)
             result.correction = 0;
       }
       result.balance = appellant == nullptr ? 0 : appellant->balance;
-      if (m_nextPicker.isEmpty())
+      if (!currentQuestionIsFinal() && m_nextPicker.isEmpty())
       {
             chooseNextPickerIfNeeded();
       }
@@ -1572,7 +1912,7 @@ PlayerId GameSession::chooseRandomConnectedPlayer() const
       QVector<PlayerId> candidates;
       for (const PlayerState &state : m_players)
       {
-            if (state.connected)
+            if (isConnected(state.id))
             {
                   candidates.push_back(state.id);
             }
@@ -1582,6 +1922,116 @@ PlayerId GameSession::chooseRandomConnectedPlayer() const
             return {};
       }
       return candidates[QRandomGenerator::global()->bounded(candidates.size())];
+}
+
+PlayerId GameSession::nextConnectedPlayer(const PlayerId &playerId) const
+{
+      if (m_players.isEmpty())
+      {
+            return {};
+      }
+      int currentIndex = -1;
+      for (int index = 0; index < m_players.size(); ++index)
+      {
+            if (m_players[index].id == playerId)
+            {
+                  currentIndex = index;
+                  break;
+            }
+      }
+      for (int offset = 1; offset <= m_players.size(); ++offset)
+      {
+            const int index =
+                  (currentIndex + offset + m_players.size()) % m_players.size();
+            if (isConnected(m_players[index].id))
+            {
+                  return m_players[index].id;
+            }
+      }
+      return {};
+}
+
+bool GameSession::currentRoundIsFinal() const
+{
+      return m_boardRound >= 0 &&
+             m_boardRound < static_cast<int>(m_game.rounds.size()) &&
+             m_game.rounds[static_cast<std::size_t>(m_boardRound)]
+                         .type.compare(QStringLiteral("final"),
+                                       Qt::CaseInsensitive) == 0;
+}
+
+bool GameSession::currentQuestionIsFinal() const
+{
+      return m_finalQuestionActive && currentRoundIsFinal() &&
+             m_currentRound == m_boardRound && currentQuestion() != nullptr;
+}
+
+int GameSession::remainingFinalThemeCount() const
+{
+      if (!currentRoundIsFinal())
+      {
+            return 0;
+      }
+      int count = 0;
+      const Round &round =
+            m_game.rounds[static_cast<std::size_t>(m_boardRound)];
+      for (int theme = 0; theme < static_cast<int>(round.themes.size()); ++theme)
+      {
+            const Theme &currentTheme =
+                  round.themes[static_cast<std::size_t>(theme)];
+            for (int question = 0;
+                 question < static_cast<int>(currentTheme.questions.size());
+                 ++question)
+            {
+                  if (isQuestionAvailable(m_boardRound, theme, question))
+                  {
+                        ++count;
+                        break;
+                  }
+            }
+      }
+      return count;
+}
+
+QPair<int, int> GameSession::remainingFinalQuestion() const
+{
+      if (!currentRoundIsFinal())
+      {
+            return {-1, -1};
+      }
+      const Round &round =
+            m_game.rounds[static_cast<std::size_t>(m_boardRound)];
+      for (int theme = 0; theme < static_cast<int>(round.themes.size()); ++theme)
+      {
+            const Theme &currentTheme =
+                  round.themes[static_cast<std::size_t>(theme)];
+            for (int question = 0;
+                 question < static_cast<int>(currentTheme.questions.size());
+                 ++question)
+            {
+                  if (isQuestionAvailable(m_boardRound, theme, question))
+                  {
+                        return {theme, question};
+                  }
+            }
+      }
+      return {-1, -1};
+}
+
+int GameSession::finalWagerLimit(const PlayerId &playerId) const
+{
+      const PlayerState *state = player(playerId);
+      if (state == nullptr)
+      {
+            return 0;
+      }
+      const qint64 balance = state->balance;
+      const quint64 magnitude =
+            balance < 0 ? static_cast<quint64>(-balance)
+                        : static_cast<quint64>(balance);
+      return static_cast<int>(std::min<quint64>(
+            magnitude,
+            static_cast<quint64>(std::numeric_limits<int>::max())));
 }
 
 Question *GameSession::currentQuestion()

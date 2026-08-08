@@ -263,6 +263,8 @@ QString phaseName(SessionPhase phase)
             return QStringLiteral("SecretTargetSelection");
       case SessionPhase::SecretWager:
             return QStringLiteral("SecretWager");
+      case SessionPhase::FinalWager:
+            return QStringLiteral("FinalWager");
       case SessionPhase::ReadingQuestion:
             return QStringLiteral("ReadingQuestion");
       case SessionPhase::WaitingForReaction:
@@ -292,6 +294,7 @@ bool phaseFromName(const QString &name, SessionPhase *phase)
             SessionPhase::PickingQuestion,
             SessionPhase::SecretTargetSelection,
             SessionPhase::SecretWager,
+            SessionPhase::FinalWager,
             SessionPhase::ReadingQuestion,
             SessionPhase::WaitingForReaction,
             SessionPhase::Answering,

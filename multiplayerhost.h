@@ -41,6 +41,7 @@ class MultiplayerHost : public QObject
       bool listen(quint16 port = 32323);
       void stop();
       void startGame();
+      bool skipToRound(int roundIndex);
       void requestSnapshot(PlayerId playerId);
 
       GameSession *session() const { return m_session; }

@@ -70,6 +70,7 @@ class GameScreen : public QWidget
       void setQuestionPermissions(bool canAnswer, bool canPass);
       void setAppealPermission(bool allowed);
       void setPausePermission(bool allowed);
+      bool skipToRound(int roundIndex);
 
     public slots:
       void applyPlayers(const QVector<PlayerState> &players);
@@ -145,6 +146,20 @@ class GameScreen : public QWidget
       void resumeSinglePlayer();
       void showAnswer();
       void returnToBoard();
+      void buildBoard(int roundIndex);
+      bool isFinalRound(int roundIndex) const;
+      bool hasAvailableQuestions() const;
+      void advanceSinglePlayerRound();
+      void eliminateSingleFinalTheme(int themeIndex);
+      bool beginSingleFinalWagersIfReady();
+      void beginSingleFinalWagers(int themeIndex, int questionIndex);
+      void promptSingleFinalWager();
+      void submitSingleFinalWager(int amount);
+      void showSingleFinalQuestion();
+      void beginSingleFinalAnswers();
+      void promptSingleFinalAnswer();
+      void finishSingleFinalAnswer(bool correct);
+      int singlePlayerWagerLimit(int playerIndex) const;
       const Question &currentQuestion() const;
       void pickRandomQuestion();
       void displayContent(const QString &text, MediaType mediaType,
@@ -204,6 +219,7 @@ class GameScreen : public QWidget
       QMediaPlayer *m_mediaPlayer{};
       QAudioOutput *m_audioOutput{};
       QVideoWidget *m_videoWidget{};
+      QLabel *m_boardStatusLabel{};
       QElapsedTimer m_reactionElapsedTimer;
       QElapsedTimer m_mediaDurationElapsedTimer;
       unsigned int m_mediaRemainingMs{};
@@ -225,11 +241,16 @@ class GameScreen : public QWidget
       bool m_mediaDurationPaused{};
       MediaType m_activeMediaType{MediaType::None};
       SessionPhase m_phase{SessionPhase::PickingQuestion};
+      int m_boardRoundIndex{-1};
       int m_currentThemeIndex{-1};
       int m_currentQuestionIndex{-1};
+      int m_singleFinalEliminatorIndex{};
+      int m_singleFinalWagerPlayerIndex{};
+      int m_singleFinalAnswerPlayerIndex{};
       unsigned int m_phaseDuration{};
       unsigned int m_singlePlayerRemainingMs{};
       bool m_answerResultApplied{};
+      bool m_singleFinalQuestionActive{};
       bool m_singlePlayerPaused{};
       bool m_singlePlayerTimerWasActive{};
       bool m_singlePlayerFlashWasActive{};
@@ -237,6 +258,8 @@ class GameScreen : public QWidget
       bool m_singlePlayerPassWasEnabled{};
       bool m_singlePlayerAnswerDialogWasVisible{};
       QPointer<QWidget> m_pageBeforePause;
+      std::vector<int> m_singleFinalWagers;
+      std::vector<bool> m_singleFinalCorrect;
       QPixmap m_displayedPixmap;
       QPixmap m_appealQuestionPixmap;
       QPixmap m_appealCorrectAnswerPixmap;

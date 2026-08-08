@@ -729,6 +729,7 @@ void MultiplayerClient::handleFrame(const MultiplayerProtocol::Frame &frame)
             cell.theme = fields.value(QStringLiteral("theme")).toInt();
             cell.question = fields.value(QStringLiteral("question")).toInt();
             cell.used = fields.value(QStringLiteral("used")) == QStringLiteral("1");
+            m_snapshot.board.round = cell.round;
             m_snapshot.board.cells.push_back(cell);
             return;
       }
@@ -1049,6 +1050,9 @@ void MultiplayerClient::startSnapshot(const QMap<QString, QString> &fields)
       m_sessionId = m_snapshot.sessionId;
       m_snapshot.currentPicker = fields.value(QStringLiteral("currentPicker"));
       m_snapshot.answerOwner = fields.value(QStringLiteral("answerOwner"));
+      m_snapshot.board.boardSequence =
+            fields.value(QStringLiteral("boardSeq")).toULongLong();
+      m_snapshot.board.round = fields.value(QStringLiteral("round")).toInt();
       parsePhase(fields, &m_snapshot.phase);
       m_snapshot.phase.paused = fields.value(QStringLiteral("paused")) ==
                                 QStringLiteral("1");

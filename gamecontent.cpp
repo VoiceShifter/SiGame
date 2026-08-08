@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QStringList>
 #include <QTextStream>
 #include <QXmlStreamReader>
 
@@ -43,6 +44,34 @@ bool parseBoolean(const QString &value)
       return normalized == QStringLiteral("true") ||
              normalized == QStringLiteral("1") ||
              normalized == QStringLiteral("yes");
+}
+
+std::size_t parseDuration(const QString &value)
+{
+      const QStringList parts = value.trimmed().split(QLatin1Char(':'));
+      bool ok = false;
+      if (parts.size() == 3)
+      {
+            const qulonglong hours = parts[0].toULongLong(&ok);
+            if (!ok)
+            {
+                  return 0;
+            }
+            const qulonglong minutes = parts[1].toULongLong(&ok);
+            if (!ok || minutes >= 60)
+            {
+                  return 0;
+            }
+            const qulonglong seconds = parts[2].toULongLong(&ok);
+            if (!ok || seconds >= 60)
+            {
+                  return 0;
+            }
+            return static_cast<std::size_t>(hours * 3600 + minutes * 60 +
+                                            seconds);
+      }
+      const qulonglong seconds = value.trimmed().toULongLong(&ok);
+      return ok ? static_cast<std::size_t>(seconds) : 0;
 }
 
 MediaType mediaTypeFromString(const QString &value)
@@ -638,10 +667,9 @@ bool parseGameContent(const QString &contentXmlPath, Game *game,
                                     attributes, QStringLiteral("type")));
                         const bool isReference = parseBoolean(attributeValue(
                               attributes, QStringLiteral("isRef")));
-                        const std::size_t duration =
+                        const std::size_t duration = parseDuration(
                               attributeValue(attributes,
-                                             QStringLiteral("duration"))
-                                    .toInt();
+                                             QStringLiteral("duration")));
                         const QString itemText =
                               xml.readElementText(
                                        QXmlStreamReader::IncludeChildElements)

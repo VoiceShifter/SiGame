@@ -172,7 +172,9 @@ class GameSession : public QObject
                             double *aspectRatio) const;
       bool isCorrectSubmission(const Question &question,
                                const AnswerSubmission &submission) const;
+      unsigned int questionReadingDuration() const;
       unsigned int questionAnswerDuration() const;
+      unsigned int answerRevealDuration() const;
       unsigned int clampDuration(quint64 value) const;
       void emitPlayersChanged();
       void emitBoardChanged();

@@ -18,10 +18,13 @@
 
 class MultiplayerClient;
 class MultiplayerHost;
+class QAudioOutput;
 class QInputDialog;
 class QLabel;
+class QMediaPlayer;
 class QResizeEvent;
 class QPropertyAnimation;
+class QVideoWidget;
 
 namespace Ui
 {
@@ -143,7 +146,12 @@ class GameScreen : public QWidget
       const Question &currentQuestion() const;
       void pickRandomQuestion();
       void displayContent(const QString &text, MediaType mediaType,
-                          const QString &mediaPath);
+                          const QString &mediaPath,
+                          unsigned int mediaDurationMs);
+      void finishMediaDisplay();
+      void stopMediaPlayback();
+      void pauseMediaPlayback();
+      void resumeMediaPlayback();
       void fitDisplayedPixmap();
       void fitAnswerOptionsTable();
       void startReactionFlash();
@@ -190,7 +198,13 @@ class GameScreen : public QWidget
       QElapsedTimer *m_globalTimer;
       QPropertyAnimation *m_progressAnimation;
       QTimer *m_flashTimer;
+      QTimer *m_mediaDurationTimer;
+      QMediaPlayer *m_mediaPlayer{};
+      QAudioOutput *m_audioOutput{};
+      QVideoWidget *m_videoWidget{};
       QElapsedTimer m_reactionElapsedTimer;
+      QElapsedTimer m_mediaDurationElapsedTimer;
+      unsigned int m_mediaRemainingMs{};
       unsigned int m_answerDuration;
       unsigned int m_questionDuration;
       unsigned int m_questionPickDuration;
@@ -205,6 +219,9 @@ class GameScreen : public QWidget
       double m_correctPointAspectRatio{1.0};
       QRect m_displayedPixmapRect;
       bool m_pointInputEnabled{};
+      bool m_mediaPausedByGame{};
+      bool m_mediaDurationPaused{};
+      MediaType m_activeMediaType{MediaType::None};
       SessionPhase m_phase{SessionPhase::PickingQuestion};
       int m_currentThemeIndex{-1};
       int m_currentQuestionIndex{-1};
@@ -221,6 +238,11 @@ class GameScreen : public QWidget
       PlayerId m_pickerId;
       PlayerId m_answerOwnerId;
       QVector<PlayerState> m_networkPlayers;
+      QVector<PlayerId> m_networkCardOrder;
+      QHash<PlayerId, QLabel *> m_networkAvatarLabels;
+      QHash<PlayerId, QLabel *> m_networkNameLabels;
+      QHash<PlayerId, QLabel *> m_networkBalanceLabels;
+      QHash<PlayerId, QByteArray> m_networkCardProfiles;
       QHash<PlayerId, PlayerGlow> m_playerGlows;
       BoardState m_networkBoard;
       PhaseState m_networkPhase;

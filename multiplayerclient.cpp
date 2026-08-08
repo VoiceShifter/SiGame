@@ -43,10 +43,13 @@ void MultiplayerClient::connectToHost(const QHostAddress &address, quint16 port,
       m_port = port;
       m_config = localConfig;
       m_identity = identity;
+      m_roster.clear();
+      m_profileCache.clear();
       if (m_identity.token.isEmpty())
       {
             m_identity = PlayerIdentity::load();
       }
+      m_identity.profilePng = normalizedProfilePng(m_identity.profilePng);
       m_profileTransferId = m_identity.profilePng.isEmpty()
                                  ? QStringLiteral("none")
                                  : QUuid::createUuid().toString(
@@ -324,6 +327,11 @@ void MultiplayerClient::handleFrame(const MultiplayerProtocol::Frame &frame)
       {
             m_sessionId = fields.value(QStringLiteral("sessionId"));
             m_localPlayerId = fields.value(QStringLiteral("playerId"));
+            if (!m_identity.profilePng.isEmpty())
+            {
+                  m_profileCache.insert(m_localPlayerId,
+                                        m_identity.profilePng);
+            }
             m_reconnected = fields.value(QStringLiteral("reconnect")) ==
                             QStringLiteral("1");
             emit connected(m_localPlayerId, m_reconnected);
@@ -599,6 +607,8 @@ void MultiplayerClient::handleFrame(const MultiplayerProtocol::Frame &frame)
             parseMediaType(fields.value(QStringLiteral("answerMediaType")),
                            &reveal.answerMediaType);
             reveal.answerMediaPath = fields.value(QStringLiteral("answerMediaPath"));
+            reveal.mediaDurationMs =
+                  fields.value(QStringLiteral("mediaDurationMs")).toUInt();
             reveal.answerOwner = fields.value(QStringLiteral("answerOwner"));
             reveal.nextPicker = fields.value(QStringLiteral("nextPicker"));
             if (m_snapshotOpen)
@@ -813,6 +823,8 @@ bool MultiplayerClient::parseQuestion(const QMap<QString, QString> &fields,
       }
       question->text = fields.value(QStringLiteral("text"));
       question->mediaPath = fields.value(QStringLiteral("mediaPath"));
+      question->mediaDurationMs =
+            fields.value(QStringLiteral("mediaDurationMs")).toUInt();
       question->answerDurationMs =
             fields.value(QStringLiteral("answerDurationMs")).toUInt();
       question->answerOwner = fields.value(QStringLiteral("answerOwner"));
@@ -923,6 +935,19 @@ void MultiplayerClient::parseRosterPlayer(
                         QStringLiteral("1");
       state.ready = fields.value(QStringLiteral("ready")) == QStringLiteral("1");
       state.balance = fields.value(QStringLiteral("balance")).toInt();
+      state.hasPassed = fields.value(QStringLiteral("hasPassed")) ==
+                        QStringLiteral("1");
+      state.answeredIncorrectly =
+            fields.value(QStringLiteral("answeredIncorrectly")) ==
+            QStringLiteral("1");
+      state.hasAnsweredForAll =
+            fields.value(QStringLiteral("hasAnsweredForAll")) ==
+            QStringLiteral("1");
+      state.mayAppeal = fields.value(QStringLiteral("mayAppeal")) ==
+                        QStringLiteral("1");
+      state.isPicker = fields.value(QStringLiteral("isPicker")) ==
+                       QStringLiteral("1");
+      state.profilePng = m_profileCache.value(state.id);
       updateRosterPlayer(state);
 }
 
@@ -993,6 +1018,7 @@ void MultiplayerClient::handleProfileEnd(const QMap<QString, QString> &fields)
                                QStringLiteral("Profile hash mismatch"));
             return;
       }
+      m_profileCache.insert(m_profile.playerId, m_profile.data);
       for (PlayerState &state : m_roster)
       {
             if (state.id == m_profile.playerId)
@@ -1001,7 +1027,10 @@ void MultiplayerClient::handleProfileEnd(const QMap<QString, QString> &fields)
                   break;
             }
       }
-      emitLobby();
+      if (!m_rosterOpen)
+      {
+            emitLobby();
+      }
       m_profile = {};
 }
 
@@ -1035,18 +1064,17 @@ void MultiplayerClient::finishSnapshot(const QMap<QString, QString> &)
             return;
       }
       m_snapshotOpen = false;
-      const QVector<PlayerState> previousRoster = m_roster;
+      for (const PlayerState &state : m_roster)
+      {
+            if (!state.profilePng.isEmpty())
+            {
+                  m_profileCache.insert(state.id, state.profilePng);
+            }
+      }
       m_roster = m_snapshot.players;
       for (PlayerState &state : m_roster)
       {
-            for (const PlayerState &previous : previousRoster)
-            {
-                  if (previous.id == state.id && !previous.profilePng.isEmpty())
-                  {
-                        state.profilePng = previous.profilePng;
-                        break;
-                  }
-            }
+            state.profilePng = m_profileCache.value(state.id);
       }
       m_snapshot.players = m_roster;
       emit snapshotApplied(m_snapshot);

@@ -103,6 +103,7 @@ struct QuestionPresentation
       QString text;
       MediaType mediaType{MediaType::None};
       QString mediaPath;
+      unsigned int mediaDurationMs{};
       unsigned int answerDurationMs{};
       PlayerId answerOwner;
       QVector<AnswerOption> answerOptions;
@@ -137,6 +138,7 @@ struct AnswerReveal
       QVector<QString> rightAnswers;
       MediaType answerMediaType{MediaType::None};
       QString answerMediaPath;
+      unsigned int mediaDurationMs{};
       PlayerId answerOwner;
       PlayerId nextPicker;
 };

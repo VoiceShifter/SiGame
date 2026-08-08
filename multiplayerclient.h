@@ -7,6 +7,7 @@
 #include "playeridentity.h"
 #include "playerstate.h"
 
+#include <QHash>
 #include <QHostAddress>
 #include <QMap>
 #include <QObject>
@@ -133,6 +134,7 @@ class MultiplayerClient : public QObject
       quint64 m_lastQuestionSequence{};
       quint64 m_lastBoardSequence{};
       QVector<PlayerState> m_roster;
+      QHash<PlayerId, QByteArray> m_profileCache;
       quint64 m_rosterSequence{};
       bool m_rosterOpen{};
       ProfileTransfer m_profile;

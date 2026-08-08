@@ -33,6 +33,24 @@ struct ProcessIdentityState
       std::unique_ptr<QLockFile> lock;
 };
 
+QByteArray encodeProfileImage(QImage image)
+{
+      constexpr int profileExtent = 200;
+      if (image.width() > profileExtent || image.height() > profileExtent)
+      {
+            image = image.scaled(profileExtent, profileExtent,
+                                 Qt::KeepAspectRatio,
+                                 Qt::SmoothTransformation);
+      }
+      QByteArray data;
+      QBuffer buffer(&data);
+      if (!buffer.open(QIODevice::WriteOnly) || !image.save(&buffer, "PNG"))
+      {
+            return {};
+      }
+      return data;
+}
+
 ProcessIdentityState &processIdentityState()
 {
       static ProcessIdentityState state = []()
@@ -103,9 +121,8 @@ bool PlayerIdentity::loadProfile(QString *errorMessage)
             return false;
       }
 
-      QByteArray data;
-      QBuffer buffer(&data);
-      if (!buffer.open(QIODevice::WriteOnly) || !image.save(&buffer, "PNG"))
+      profilePng = encodeProfileImage(image);
+      if (profilePng.isEmpty())
       {
             if (errorMessage != nullptr)
             {
@@ -113,7 +130,6 @@ bool PlayerIdentity::loadProfile(QString *errorMessage)
             }
             return false;
       }
-      profilePng = data;
       return true;
 }
 
@@ -155,13 +171,17 @@ QByteArray loadProfilePng(const QString &path)
       {
             return {};
       }
-      QByteArray data;
-      QBuffer buffer(&data);
-      if (!buffer.open(QIODevice::WriteOnly) || !image.save(&buffer, "PNG"))
+      return encodeProfileImage(image);
+}
+
+QByteArray normalizedProfilePng(const QByteArray &profilePng)
+{
+      if (profilePng.isEmpty())
       {
             return {};
       }
-      return data;
+      const QImage image = QImage::fromData(profilePng);
+      return image.isNull() ? QByteArray() : encodeProfileImage(image);
 }
 
 QString profileSha256(const QByteArray &profilePng)

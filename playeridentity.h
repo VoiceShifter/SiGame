@@ -19,6 +19,7 @@ struct PlayerIdentity
 PlayerIdentity loadPlayerIdentity();
 bool savePlayerIdentity(const PlayerIdentity &identity);
 QByteArray loadProfilePng(const QString &path);
+QByteArray normalizedProfilePng(const QByteArray &profilePng);
 QString profileSha256(const QByteArray &profilePng);
 QString profileBase64(const QByteArray &profilePng);
 QByteArray profileFromBase64(const QString &encoded);

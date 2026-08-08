@@ -104,6 +104,7 @@ class MultiplayerHost : public QObject
             int expectedProfileBytes{-1};
             int nextProfileChunk{};
             QByteArray expectedProfileHash;
+            QHash<PlayerId, QByteArray> sentProfileHashes;
             bool handshaken{};
             bool ready{};
             bool profilePending{};

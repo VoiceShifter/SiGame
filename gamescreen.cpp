@@ -3,6 +3,9 @@
 #include "multiplayerhost.h"
 #include "ui_gamescreen.h"
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#include <QAudioOutput>
+#endif
 #include <QColor>
 #include <QDebug>
 #include <QFileInfo>
@@ -12,6 +15,7 @@
 #include <QFontMetrics>
 #include <QGraphicsDropShadowEffect>
 #include <QInputDialog>
+#include <QMediaPlayer>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPropertyAnimation>
@@ -22,11 +26,25 @@
 #include <QSet>
 #include <QStringList>
 #include <QTimer>
+#include <QUrl>
+#include <QVideoWidget>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 #include <vector>
+
+namespace
+{
+unsigned int mediaDurationMilliseconds(std::size_t seconds)
+{
+      const std::size_t maximumSeconds =
+            std::numeric_limits<unsigned int>::max() / 1000U;
+      return static_cast<unsigned int>(std::min(seconds, maximumSeconds) *
+                                       1000U);
+}
+} // namespace
 
 GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                        const QString &ProfilePicturePath,
@@ -49,6 +67,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
         m_globalTimer(new QElapsedTimer),
         m_progressAnimation(new QPropertyAnimation(this)),
         m_flashTimer(new QTimer(this)),
+        m_mediaDurationTimer(new QTimer(this)),
         m_answerDuration(static_cast<unsigned int>(AnswerDuration) * 1000U),
         m_questionDuration(static_cast<unsigned int>(QuestionDuration) * 1000U),
         m_questionPickDuration(
@@ -58,6 +77,33 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
 {
       m_mode = mode;
       ui->setupUi(this);
+      m_mediaPlayer = new QMediaPlayer(this);
+      m_mediaPlayer->setObjectName(QStringLiteral("questionMediaPlayer"));
+      m_videoWidget = new QVideoWidget(ui->questionFrame);
+      m_videoWidget->setObjectName(QStringLiteral("questionVideoWidget"));
+      m_videoWidget->setAspectRatioMode(Qt::KeepAspectRatio);
+      m_videoWidget->setSizePolicy(QSizePolicy::Ignored,
+                                   QSizePolicy::Expanding);
+      m_videoWidget->hide();
+      ui->questionFrameLayout->addWidget(m_videoWidget);
+      m_mediaPlayer->setVideoOutput(m_videoWidget);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+      m_audioOutput = new QAudioOutput(this);
+      m_audioOutput->setVolume(1.0F);
+      m_mediaPlayer->setAudioOutput(m_audioOutput);
+      connect(m_mediaPlayer, &QMediaPlayer::errorOccurred, this,
+              [](QMediaPlayer::Error, const QString &message)
+              { qWarning() << "Unable to play media:" << message; });
+#else
+      connect(m_mediaPlayer,
+              QOverload<QMediaPlayer::Error>::of(&QMediaPlayer::error), this,
+              [this](QMediaPlayer::Error)
+              { qWarning() << "Unable to play media:"
+                           << m_mediaPlayer->errorString(); });
+#endif
+      m_mediaDurationTimer->setSingleShot(true);
+      connect(m_mediaDurationTimer, &QTimer::timeout, this,
+              &GameScreen::finishMediaDisplay);
       setupAppealPage();
       ui->progressBar->setRange(0, 1000);
       m_progressAnimation->setTargetObject(ui->progressBar);
@@ -658,25 +704,23 @@ void GameScreen::setProgressBarColor(GamePhase phase)
       switch (phase)
       {
       case GamePhase::PickingQuestion:
-            color = QStringLiteral("#9c27b0");
-            break;
       case GamePhase::ReadingQuestion:
+      case GamePhase::SecretTargetSelection:
+      case GamePhase::Lobby:
+      case GamePhase::Finished:
             color = QStringLiteral("#2196f3");
             break;
       case GamePhase::WaitingForReaction:
             color = QStringLiteral("#ffeb3b");
             break;
       case GamePhase::Answering:
+      case GamePhase::ForAllAnswering:
       case GamePhase::ShowingAnswer:
+      case GamePhase::SecretWager:
+            color = QStringLiteral("#9c27b0");
+            break;
       case GamePhase::AppealVoting:
             color = QStringLiteral("#f44336");
-            break;
-      case GamePhase::Lobby:
-      case GamePhase::SecretTargetSelection:
-      case GamePhase::SecretWager:
-      case GamePhase::ForAllAnswering:
-      case GamePhase::Finished:
-            color = QStringLiteral("#9c27b0");
             break;
       }
       ui->progressBar->setStyleSheet(
@@ -714,6 +758,7 @@ void GameScreen::handlePhaseTimeout()
             pickRandomQuestion();
             break;
       case GamePhase::ReadingQuestion:
+            finishMediaDisplay();
             startReactionFlash();
             ui->AnswerBytton->setEnabled(true);
             startPhaseTimer(GamePhase::WaitingForReaction,
@@ -801,7 +846,10 @@ void GameScreen::showQuestion(int themeIndex, int questionIndex)
       }
 
       resetAnswerInputState();
-      displayContent(question.text, question.mediaType, question.mediaPath);
+      const unsigned int mediaDuration =
+            mediaDurationMilliseconds(question.mediaDuration);
+      displayContent(question.text, question.mediaType, question.mediaPath,
+                     mediaDuration);
       if (question.answerType == AnswerType::Select)
       {
             if (question.answerOptions.size() >= 2)
@@ -844,11 +892,13 @@ void GameScreen::showQuestion(int themeIndex, int questionIndex)
       ui->passButton->setEnabled(!m_players.empty());
       ui->gameContentStack->setCurrentWidget(ui->questionPage);
       QTimer::singleShot(0, this, &GameScreen::fitDisplayedPixmap);
-      startPhaseTimer(GamePhase::ReadingQuestion, m_questionDuration);
+      startPhaseTimer(GamePhase::ReadingQuestion,
+                      std::max(m_questionDuration, mediaDuration));
 }
 
 void GameScreen::showAnswer()
 {
+      finishMediaDisplay();
       ui->AnswerBytton->setEnabled(false);
       ui->passButton->setEnabled(false);
       const Question &question = currentQuestion();
@@ -928,14 +978,20 @@ void GameScreen::showAnswer()
             break;
       }
 
+      const unsigned int answerMediaDuration =
+            mediaDurationMilliseconds(question.answerMediaDuration);
       displayContent(answers.join(QLatin1Char('\n')),
-                     question.answerMediaType, question.answerMediaPath);
-      startPhaseTimer(GamePhase::ShowingAnswer, AnswerRevealDuration);
+                     question.answerMediaType, question.answerMediaPath,
+                     answerMediaDuration);
+      startPhaseTimer(GamePhase::ShowingAnswer,
+                      std::max(AnswerRevealDuration,
+                               answerMediaDuration));
 }
 
 void GameScreen::returnToBoard()
 {
       stopReactionFlash();
+      stopMediaPlayback();
       ui->AnswerBytton->setEnabled(false);
       ui->passButton->setEnabled(false);
       resetAnswerInputState();
@@ -1004,10 +1060,13 @@ void GameScreen::pickRandomQuestion()
 }
 
 void GameScreen::displayContent(const QString &text, MediaType mediaType,
-                                const QString &mediaPath)
+                                const QString &mediaPath,
+                                unsigned int mediaDurationMs)
 {
+      stopMediaPlayback();
       ui->questionTextLabel->setText(text);
       ui->questionMediaLabel->clear();
+      m_videoWidget->hide();
       m_displayedPixmap = {};
       m_displayedPixmapRect = {};
 
@@ -1024,15 +1083,52 @@ void GameScreen::displayContent(const QString &text, MediaType mediaType,
             else
             {
                   m_displayedPixmap = image;
+                  m_activeMediaType = MediaType::Image;
+            }
+      }
+      else if ((mediaType == MediaType::Audio ||
+                mediaType == MediaType::Video) &&
+               !mediaPath.isEmpty())
+      {
+            const QString absolutePath =
+                  QDir(m_gamepackPath).filePath(mediaPath);
+            if (!QFileInfo(absolutePath).isFile())
+            {
+                  qWarning() << "Unable to load question media:"
+                             << absolutePath;
+            }
+            else
+            {
+                  m_activeMediaType = mediaType;
+                  if (mediaType == MediaType::Video)
+                  {
+                        m_videoWidget->show();
+                  }
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                  m_mediaPlayer->setSource(QUrl::fromLocalFile(absolutePath));
+#else
+                  m_mediaPlayer->setMedia(QUrl::fromLocalFile(absolutePath));
+#endif
+                  m_mediaPlayer->play();
             }
       }
 
       if (m_displayedPixmap.isNull())
       {
             ui->questionMediaLabel->hide();
-            ui->questionTextLabel->setSizePolicy(QSizePolicy::Expanding,
-                                                 QSizePolicy::Expanding);
-            ui->questionTextLabel->setAlignment(Qt::AlignCenter);
+            if (m_activeMediaType == MediaType::Video)
+            {
+                  ui->questionTextLabel->setSizePolicy(QSizePolicy::Expanding,
+                                                       QSizePolicy::Maximum);
+                  ui->questionTextLabel->setAlignment(Qt::AlignHCenter |
+                                                      Qt::AlignTop);
+            }
+            else
+            {
+                  ui->questionTextLabel->setSizePolicy(QSizePolicy::Expanding,
+                                                       QSizePolicy::Expanding);
+                  ui->questionTextLabel->setAlignment(Qt::AlignCenter);
+            }
       }
       else
       {
@@ -1042,6 +1138,105 @@ void GameScreen::displayContent(const QString &text, MediaType mediaType,
             ui->questionTextLabel->setAlignment(Qt::AlignHCenter |
                                                 Qt::AlignTop);
             QTimer::singleShot(0, this, &GameScreen::fitDisplayedPixmap);
+      }
+      if (m_activeMediaType != MediaType::None && mediaDurationMs > 0)
+      {
+            m_mediaRemainingMs = mediaDurationMs;
+            m_mediaDurationElapsedTimer.restart();
+            m_mediaDurationTimer->start(static_cast<int>(std::min<unsigned int>(
+                  mediaDurationMs,
+                  static_cast<unsigned int>(
+                        std::numeric_limits<int>::max()))));
+      }
+}
+
+void GameScreen::finishMediaDisplay()
+{
+      const MediaType finishedType = m_activeMediaType;
+      stopMediaPlayback();
+      if (finishedType == MediaType::Image ||
+          finishedType == MediaType::Video)
+      {
+            ui->questionMediaLabel->clear();
+            ui->questionMediaLabel->hide();
+            m_displayedPixmapRect = {};
+            ui->questionTextLabel->setSizePolicy(QSizePolicy::Expanding,
+                                                 QSizePolicy::Expanding);
+            ui->questionTextLabel->setAlignment(Qt::AlignCenter);
+      }
+}
+
+void GameScreen::stopMediaPlayback()
+{
+      m_mediaDurationTimer->stop();
+      m_mediaDurationElapsedTimer.invalidate();
+      m_mediaRemainingMs = 0;
+      m_mediaDurationPaused = false;
+      m_activeMediaType = MediaType::None;
+      if (m_videoWidget != nullptr)
+      {
+            m_videoWidget->hide();
+      }
+      if (m_mediaPlayer == nullptr)
+      {
+            return;
+      }
+      m_mediaPausedByGame = false;
+      m_mediaPlayer->stop();
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+      m_mediaPlayer->setSource({});
+#endif
+}
+
+void GameScreen::pauseMediaPlayback()
+{
+      if (m_mediaDurationTimer->isActive() &&
+          m_mediaDurationElapsedTimer.isValid())
+      {
+            const unsigned int elapsed = static_cast<unsigned int>(
+                  std::max<qint64>(0, m_mediaDurationElapsedTimer.elapsed()));
+            m_mediaRemainingMs =
+                  elapsed >= m_mediaRemainingMs ? 0U
+                                                : m_mediaRemainingMs - elapsed;
+            m_mediaDurationTimer->stop();
+            m_mediaDurationElapsedTimer.invalidate();
+            m_mediaDurationPaused = m_mediaRemainingMs > 0;
+      }
+      if (m_mediaPlayer == nullptr)
+      {
+            return;
+      }
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+      const QMediaPlayer::MediaStatus status = m_mediaPlayer->mediaStatus();
+      m_mediaPausedByGame = !m_mediaPlayer->source().isEmpty() &&
+                            status != QMediaPlayer::NoMedia &&
+                            status != QMediaPlayer::InvalidMedia &&
+                            status != QMediaPlayer::EndOfMedia;
+#else
+      m_mediaPausedByGame =
+            m_mediaPlayer->state() == QMediaPlayer::PlayingState;
+#endif
+      if (m_mediaPausedByGame)
+      {
+            m_mediaPlayer->pause();
+      }
+}
+
+void GameScreen::resumeMediaPlayback()
+{
+      if (m_mediaDurationPaused && m_mediaRemainingMs > 0)
+      {
+            m_mediaDurationPaused = false;
+            m_mediaDurationElapsedTimer.restart();
+            m_mediaDurationTimer->start(static_cast<int>(std::min<unsigned int>(
+                  m_mediaRemainingMs,
+                  static_cast<unsigned int>(
+                        std::numeric_limits<int>::max()))));
+      }
+      if (m_mediaPlayer != nullptr && m_mediaPausedByGame)
+      {
+            m_mediaPausedByGame = false;
+            m_mediaPlayer->play();
       }
 }
 
@@ -1238,6 +1433,8 @@ void GameScreen::enablePointAnswerInput()
             qWarning() << "Point input cannot be enabled";
             return;
       }
+      ui->questionMediaLabel->show();
+      QTimer::singleShot(0, this, &GameScreen::fitDisplayedPixmap);
       m_pointInputEnabled = true;
       ui->questionMediaLabel->setCursor(Qt::CrossCursor);
 }
@@ -1790,6 +1987,20 @@ void GameScreen::applyPhase(const PhaseState &phase)
       m_phase = phase.phase;
       m_networkPhaseSequence = phase.phaseSequence;
       m_networkQuestionSequence = phase.questionSequence;
+      if (phaseChanged &&
+          (phase.phase == SessionPhase::WaitingForReaction ||
+           phase.phase == SessionPhase::Answering ||
+           phase.phase == SessionPhase::ForAllAnswering))
+      {
+            finishMediaDisplay();
+      }
+      if (phaseChanged &&
+          (phase.phase == SessionPhase::PickingQuestion ||
+           phase.phase == SessionPhase::Lobby ||
+           phase.phase == SessionPhase::Finished))
+      {
+            stopMediaPlayback();
+      }
       if (!phase.owner.isEmpty() &&
           (phase.phase == SessionPhase::Answering ||
            phase.phase == SessionPhase::SecretWager ||
@@ -1915,7 +2126,8 @@ void GameScreen::applyReveal(const AnswerReveal &reveal)
       question.answerMediaType = reveal.answerMediaType;
       question.answerMediaPath = reveal.answerMediaPath;
       displayContent(reveal.rightAnswers.join(QLatin1Char('\n')),
-                     reveal.answerMediaType, reveal.answerMediaPath);
+                     reveal.answerMediaType, reveal.answerMediaPath,
+                     reveal.mediaDurationMs);
       if (question.answerType == AnswerType::Select)
       {
             highlightSelectAnswers(question);
@@ -1944,6 +2156,7 @@ void GameScreen::applyAppeal(const AppealState &appeal)
       {
             return;
       }
+      stopMediaPlayback();
       m_appealId = appeal.appealId;
       m_appealAppellant = appeal.appellant;
       m_appealVoteSubmitted = appeal.votes.contains(m_localPlayerId);
@@ -2044,10 +2257,12 @@ void GameScreen::applyPause(bool paused, SessionPhase phase,
       {
             m_tickTimer->stop();
             m_progressAnimation->stop();
+            pauseMediaPlayback();
             ui->gameContentStack->setCurrentWidget(ui->pausePage);
       }
       else
       {
+            resumeMediaPlayback();
             PhaseState state = m_networkPhase;
             state.phase = phase;
             state.remainingMs = remainingMs;
@@ -2141,6 +2356,8 @@ void GameScreen::applyNetworkQuestion(
       m_networkQuestion->text = presentation.text;
       m_networkQuestion->mediaType = presentation.mediaType;
       m_networkQuestion->mediaPath = presentation.mediaPath;
+      m_networkQuestion->mediaDuration =
+            presentation.mediaDurationMs / 1000U;
       m_networkQuestion->answerOptions.assign(presentation.answerOptions.cbegin(),
                                               presentation.answerOptions.cend());
       m_networkQuestionSequence = presentation.questionSequence;
@@ -2150,7 +2367,8 @@ void GameScreen::applyNetworkQuestion(
       m_secretTargetSelection = false;
       resetAnswerInputState();
       displayContent(presentation.text, presentation.mediaType,
-                     presentation.mediaPath);
+                     presentation.mediaPath,
+                     presentation.mediaDurationMs);
       if (presentation.answerType == AnswerType::Select &&
           presentation.answerOptions.size() >= 2)
       {
@@ -2299,52 +2517,87 @@ void GameScreen::rebuildNetworkPlayerCards()
       {
             return;
       }
-      clearNetworkPlayerCards();
+      QVector<PlayerId> order;
+      order.reserve(m_networkPlayers.size());
+      for (const PlayerState &state : m_networkPlayers)
+      {
+            order.push_back(state.id);
+      }
+      if (order != m_networkCardOrder)
+      {
+            clearNetworkPlayerCards();
+            m_networkCardOrder = order;
+            for (const PlayerState &state : m_networkPlayers)
+            {
+                  auto *layout = new QVBoxLayout;
+                  auto *avatar = new QLabel;
+                  avatar->setScaledContents(true);
+                  avatar->setProperty("secretTargetId", state.id);
+                  avatar->installEventFilter(this);
+                  auto *name = new QLabel;
+                  auto *balance = new QLabel;
+                  layout->addWidget(avatar);
+                  layout->addWidget(name);
+                  layout->addWidget(balance);
+                  ui->PlayersLayout->addLayout(layout);
+                  m_networkAvatarLabels.insert(state.id, avatar);
+                  m_networkNameLabels.insert(state.id, name);
+                  m_networkBalanceLabels.insert(state.id, balance);
+            }
+      }
+
       const QPixmap fallback(QStringLiteral("Images/default.jpg"));
       for (const PlayerState &state : m_networkPlayers)
       {
-            auto *layout = new QVBoxLayout;
-            auto *avatar = new QLabel;
-            QPixmap picture = fallback;
-            if (!state.profilePng.isEmpty())
+            QLabel *avatar = m_networkAvatarLabels.value(state.id);
+            QLabel *name = m_networkNameLabels.value(state.id);
+            QLabel *balance = m_networkBalanceLabels.value(state.id);
+            if (avatar == nullptr || name == nullptr || balance == nullptr)
             {
-                  QPixmap remote;
-                  if (remote.loadFromData(state.profilePng))
-                  {
-                        picture = remote;
-                  }
-                  else
-                  {
-                        qWarning() << "Unable to load remote profile picture"
-                                   << state.id;
-                  }
+                  continue;
             }
-            avatar->setPixmap(
-                  picture.scaled(200, 200, Qt::KeepAspectRatio,
-                                 Qt::SmoothTransformation));
-            avatar->setScaledContents(true);
+            if (!m_networkCardProfiles.contains(state.id) ||
+                m_networkCardProfiles.value(state.id) != state.profilePng)
+            {
+                  QPixmap picture = fallback;
+                  if (!state.profilePng.isEmpty())
+                  {
+                        QPixmap remote;
+                        if (remote.loadFromData(state.profilePng))
+                        {
+                              picture = remote;
+                        }
+                        else
+                        {
+                              qWarning() << "Unable to load remote profile picture"
+                                         << state.id;
+                        }
+                  }
+                  avatar->setPixmap(
+                        picture.scaled(200, 200, Qt::KeepAspectRatio,
+                                       Qt::SmoothTransformation));
+                  m_networkCardProfiles.insert(state.id, state.profilePng);
+            }
             applyPlayerGlow(
                   avatar, m_playerGlows.value(state.id, PlayerGlow::None));
-            avatar->setProperty("secretTargetId", state.id);
-            avatar->installEventFilter(this);
             avatar->setCursor(m_secretTargetSelection && state.isPicker &&
                                       state.id != m_localPlayerId
                                     ? Qt::PointingHandCursor
                                     : Qt::ArrowCursor);
-            auto *name = new QLabel(state.nickname.isEmpty()
-                                          ? tr("Unnamed")
-                                          : state.nickname);
-            auto *balance = new QLabel(tr("Balance: %1").arg(state.balance));
-            layout->addWidget(avatar);
-            layout->addWidget(name);
-            layout->addWidget(balance);
-            ui->PlayersLayout->addLayout(layout);
+            name->setText(state.nickname.isEmpty() ? tr("Unnamed")
+                                                   : state.nickname);
+            balance->setText(tr("Balance: %1").arg(state.balance));
       }
 }
 
 void GameScreen::clearNetworkPlayerCards()
 {
       deleteLayoutItems(ui->PlayersLayout);
+      m_networkCardOrder.clear();
+      m_networkAvatarLabels.clear();
+      m_networkNameLabels.clear();
+      m_networkBalanceLabels.clear();
+      m_networkCardProfiles.clear();
       m_players.clear();
 }
 
@@ -2382,7 +2635,12 @@ void GameScreen::setNetworkControls()
       }
       else
       {
-            if (m_phase == SessionPhase::WaitingForReaction)
+            if (m_phase == SessionPhase::ReadingQuestion)
+            {
+                  m_canAnswer = false;
+                  m_canPass = eligible;
+            }
+            else if (m_phase == SessionPhase::WaitingForReaction)
             {
                   m_canAnswer = eligible;
                   m_canPass = eligible;
@@ -2522,6 +2780,7 @@ quint64 GameScreen::nextLocalActionId() { return m_localActionId++; }
 
 void GameScreen::setNetworkPhaseTimer(const PhaseState &phase)
 {
+      setProgressBarColor(phase.phase);
       if (phase.phase != SessionPhase::WaitingForReaction)
       {
             stopReactionFlash();

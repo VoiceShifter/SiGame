@@ -372,7 +372,7 @@ void GameSession::selectQuestion(PlayerId playerId, int round, int theme,
 
       m_presentation = makePresentation();
       emit questionStarted(*m_presentation);
-      startPhase(SessionPhase::ReadingQuestion, m_config.questionDurationMs);
+      startPhase(SessionPhase::ReadingQuestion, questionReadingDuration());
 }
 
 void GameSession::selectSecretTarget(PlayerId picker, PlayerId target,
@@ -484,7 +484,7 @@ void GameSession::submitSecretWager(PlayerId target, int amount,
       {
             emit questionStarted(*m_presentation);
       }
-      startPhase(SessionPhase::ReadingQuestion, m_config.questionDurationMs,
+      startPhase(SessionPhase::ReadingQuestion, questionReadingDuration(),
                  target);
 }
 
@@ -1139,11 +1139,11 @@ void GameSession::beginPicking()
       {
             state.isPicker = state.id == m_currentPicker;
       }
-      emitPlayersChanged();
       emit pickerChanged(m_currentPicker);
       emitBoardChanged();
       startPhase(SessionPhase::PickingQuestion, m_config.questionPickDurationMs,
                  m_currentPicker);
+      emitPlayersChanged();
 }
 
 void GameSession::selectRandomQuestion()
@@ -1319,9 +1319,9 @@ void GameSession::finishForAll()
                   correctPlayers.size())];
             m_nextPicker = result.nextPicker;
       }
-      emitPlayersChanged();
       emit forAllResult(result);
       revealAnswer();
+      emitPlayersChanged();
 }
 
 void GameSession::submitAnswerInternal(const PlayerId &playerId,
@@ -1400,9 +1400,9 @@ void GameSession::applyNormalAnswer(const PlayerId &playerId,
             m_nextPicker = playerId;
             result.balance = state->balance;
             result.retryAllowed = false;
-            emitPlayersChanged();
             emit answerResult(result);
             revealAnswer();
+            emitPlayersChanged();
             return;
       }
 
@@ -1417,7 +1417,6 @@ void GameSession::applyNormalAnswer(const PlayerId &playerId,
       const bool secret = question->type == QuestionType::SecretPublicPrice;
       const unsigned int remaining = result.remainingReactionMs;
       result.retryAllowed = !secret && remaining > 0 && hasRemainingEligiblePlayers();
-      emitPlayersChanged();
       emit answerResult(result);
       m_answerOwner.clear();
       emit answerOwnerChanged({}, 0);
@@ -1431,6 +1430,7 @@ void GameSession::applyNormalAnswer(const PlayerId &playerId,
       {
             revealAnswer();
       }
+      emitPlayersChanged();
 }
 
 void GameSession::revealAnswer()
@@ -1453,7 +1453,7 @@ void GameSession::revealAnswer()
       reveal.answerOwner = revealedAnswerOwner;
       m_lastReveal = reveal;
       emit answerRevealed(reveal);
-      startPhase(SessionPhase::ShowingAnswer, m_config.answerRevealDurationMs,
+      startPhase(SessionPhase::ShowingAnswer, answerRevealDuration(),
                  reveal.nextPicker);
 }
 
@@ -1488,7 +1488,6 @@ void GameSession::beginNextQuestion()
       m_currentRound = -1;
       m_currentTheme = -1;
       m_currentQuestion = -1;
-      emitPlayersChanged();
       const BoardState board = boardState();
       if (board.cells.isEmpty() ||
           std::none_of(board.cells.cbegin(), board.cells.cend(),
@@ -1496,6 +1495,7 @@ void GameSession::beginNextQuestion()
       {
             m_phase = SessionPhase::Finished;
             m_remainingMs = 0;
+            emitPlayersChanged();
             emit gameFinished();
             return;
       }
@@ -1533,7 +1533,6 @@ void GameSession::finishAppeal(bool accepted)
             chooseNextPickerIfNeeded();
       }
       result.nextPicker = m_nextPicker;
-      emitPlayersChanged();
       emit appealFinished(result);
       m_appeal.reset();
       beginNextQuestion();
@@ -1631,6 +1630,8 @@ QuestionPresentation GameSession::makePresentation() const
       presentation.text = question->text;
       presentation.mediaType = question->mediaType;
       presentation.mediaPath = question->mediaPath;
+      presentation.mediaDurationMs =
+            clampDuration(question->mediaDuration * 1000ULL);
       presentation.answerDurationMs = questionAnswerDuration();
       presentation.answerOwner = question->type == QuestionType::SecretPublicPrice
                                        ? m_secretTarget
@@ -1668,6 +1669,8 @@ AnswerReveal GameSession::makeReveal() const
       }
       reveal.answerMediaType = question->answerMediaType;
       reveal.answerMediaPath = question->answerMediaPath;
+      reveal.mediaDurationMs =
+            clampDuration(question->answerMediaDuration * 1000ULL);
       return reveal;
 }
 
@@ -1772,6 +1775,16 @@ bool GameSession::isCorrectSubmission(const Question &question,
             { return submitted.compare(right.trimmed(), Qt::CaseInsensitive) == 0; });
 }
 
+unsigned int GameSession::questionReadingDuration() const
+{
+      const Question *question = currentQuestion();
+      const unsigned int mediaDuration =
+            question == nullptr
+                  ? 0U
+                  : clampDuration(question->mediaDuration * 1000ULL);
+      return std::max(m_config.questionDurationMs, mediaDuration);
+}
+
 unsigned int GameSession::questionAnswerDuration() const
 {
       const Question *question = currentQuestion();
@@ -1780,6 +1793,16 @@ unsigned int GameSession::questionAnswerDuration() const
             return clampDuration(question->answerDuration * 1000ULL);
       }
       return m_config.answerDurationMs;
+}
+
+unsigned int GameSession::answerRevealDuration() const
+{
+      const Question *question = currentQuestion();
+      const unsigned int mediaDuration =
+            question == nullptr
+                  ? 0U
+                  : clampDuration(question->answerMediaDuration * 1000ULL);
+      return std::max(m_config.answerRevealDurationMs, mediaDuration);
 }
 
 unsigned int GameSession::clampDuration(quint64 value) const

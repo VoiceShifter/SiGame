@@ -83,6 +83,8 @@ QMap<QString, QString> questionFields(const QuestionPresentation &question)
                     MultiplayerProtocol::mediaTypeName(
                           static_cast<int>(question.mediaType)));
       fields.insert(QStringLiteral("mediaPath"), question.mediaPath);
+      fields.insert(QStringLiteral("mediaDurationMs"),
+                    stringValue(question.mediaDurationMs));
       fields.insert(QStringLiteral("answerDurationMs"),
                     stringValue(question.answerDurationMs));
       fields.insert(QStringLiteral("answerOwner"), question.answerOwner);
@@ -114,6 +116,7 @@ MultiplayerHost::MultiplayerHost(const GameConfig &config, const Game &game,
             m_localPlayerId = QStringLiteral("player-host-%1")
                                     .arg(m_identity.token.left(12));
       }
+      m_identity.profilePng = normalizedProfilePng(m_identity.profilePng);
       PlayerState host;
       host.id = m_localPlayerId;
       host.token = m_identity.token;
@@ -691,7 +694,14 @@ void MultiplayerHost::handleProfileEnd(Peer &peer,
                       QStringLiteral("The profile hash does not match"));
             return;
       }
-      m_session->updatePlayerProfile(peer.playerId, peer.profileData);
+      const QByteArray normalized = normalizedProfilePng(peer.profileData);
+      if (normalized.isEmpty())
+      {
+            sendError(peer, QStringLiteral("PROFILE_INVALID"),
+                      QStringLiteral("The profile could not be normalized"));
+            return;
+      }
+      m_session->updatePlayerProfile(peer.playerId, normalized);
       peer.profilePending = false;
       peer.expectedProfileBytes = -1;
       sendRoster();
@@ -1081,15 +1091,25 @@ void MultiplayerHost::sendRoster(Peer &peer)
                        {QStringLiteral("nickname"), state.nickname},
                        {QStringLiteral("connected"), boolValue(state.connected)},
                        {QStringLiteral("ready"), boolValue(state.ready)},
-                       {QStringLiteral("balance"), stringValue(state.balance)}});
-            if (!state.profilePng.isEmpty())
-            {
-                  sendProfile(peer, state);
-            }
+                       {QStringLiteral("balance"), stringValue(state.balance)},
+                       {QStringLiteral("hasPassed"),
+                        boolValue(state.hasPassed)},
+                       {QStringLiteral("answeredIncorrectly"),
+                        boolValue(state.answeredIncorrectly)},
+                       {QStringLiteral("hasAnsweredForAll"),
+                        boolValue(state.hasAnsweredForAll)},
+                       {QStringLiteral("mayAppeal"),
+                        boolValue(state.mayAppeal)},
+                       {QStringLiteral("isPicker"),
+                        boolValue(state.isPicker)}});
       }
       sendFrame(peer, QStringLiteral("ROSTER_END"),
                 {{QStringLiteral("rosterSeq"),
                   stringValue(m_rosterSequence)}});
+      for (const PlayerState &state : roster)
+      {
+            sendProfile(peer, state);
+      }
 }
 
 void MultiplayerHost::sendProfile(Peer &peer, const PlayerState &state)
@@ -1099,9 +1119,13 @@ void MultiplayerHost::sendProfile(Peer &peer, const PlayerState &state)
       {
             return;
       }
-      const QString transferId = QUuid::createUuid().toString(QUuid::WithoutBraces);
       const QByteArray hash = QCryptographicHash::hash(
             state.profilePng, QCryptographicHash::Sha256);
+      if (peer.sentProfileHashes.value(state.id) == hash)
+      {
+            return;
+      }
+      const QString transferId = QUuid::createUuid().toString(QUuid::WithoutBraces);
       sendFrame(peer, QStringLiteral("PROFILE_BEGIN"),
                 {{QStringLiteral("transferId"), transferId},
                  {QStringLiteral("playerId"), state.id},
@@ -1124,6 +1148,7 @@ void MultiplayerHost::sendProfile(Peer &peer, const PlayerState &state)
       sendFrame(peer, QStringLiteral("PROFILE_END"),
                 {{QStringLiteral("transferId"), transferId},
                  {QStringLiteral("sha256"), QString::fromLatin1(hash.toHex())}});
+      peer.sentProfileHashes.insert(state.id, hash);
 }
 
 void MultiplayerHost::sendGameStarted()
@@ -1217,6 +1242,8 @@ void MultiplayerHost::sendSnapshot(Peer &peer)
                    MultiplayerProtocol::mediaTypeName(
                          static_cast<int>(reveal.answerMediaType))},
                   {QStringLiteral("answerMediaPath"), reveal.answerMediaPath},
+                  {QStringLiteral("mediaDurationMs"),
+                   stringValue(reveal.mediaDurationMs)},
                   {QStringLiteral("answerOwner"), reveal.answerOwner},
                   {QStringLiteral("nextPicker"), reveal.nextPicker}};
             for (int index = 0; index < reveal.rightAnswers.size(); ++index)
@@ -1492,6 +1519,8 @@ void MultiplayerHost::connectSessionSignals()
                                  static_cast<int>(reveal.answerMediaType))},
                           {QStringLiteral("answerMediaPath"),
                            reveal.answerMediaPath},
+                          {QStringLiteral("mediaDurationMs"),
+                           stringValue(reveal.mediaDurationMs)},
                           {QStringLiteral("answerOwner"), reveal.answerOwner},
                           {QStringLiteral("nextPicker"), reveal.nextPicker}};
                     for (int index = 0; index < reveal.rightAnswers.size(); ++index)

@@ -385,15 +385,16 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                   Index == 0 && !Nickname.isEmpty()
                         ? Nickname
                         : tr("Player %1").arg(Index + 1);
-            QLabel *playerName    = new QLabel(playerDisplayName);
-            QLabel *balanceLabel  = new QLabel;
+            QLabel *playerName = new QLabel(playerDisplayName);
+            QLabel *balanceLabel = new QLabel;
+            QLabel *answerBubble = createAnswerBubble();
             playerLayout->addWidget(playerPfp);
             playerLayout->addWidget(playerName);
             playerLayout->addWidget(balanceLabel);
             playerLayout->setStretch(0, 0);
             ui->PlayersLayout->addLayout(playerLayout);
-            m_players.push_back(
-                  {playerDisplayName, 0, false, playerPfp, balanceLabel});
+            m_players.push_back({playerDisplayName, 0, false, playerPfp,
+                                 balanceLabel, answerBubble});
             updateBalanceLabel(m_players.back());
       }
 
@@ -657,22 +658,30 @@ void GameScreen::fitAppealPixmaps()
       fit(m_appealCorrectAnswerPixmap, m_appealCorrectAnswerMediaLabel);
 }
 
-QString GameScreen::appealAnswerText(const QString &answer) const
+QString GameScreen::displayAnswerText(const QString &answer) const
 {
-      if (!m_networkQuestion.has_value() ||
-          m_networkQuestion->answerType != AnswerType::Select)
+      const Question *question = nullptr;
+      if (m_mode == GameScreenMode::SinglePlayer && m_currentThemeIndex >= 0 &&
+          m_currentQuestionIndex >= 0)
+      {
+            question = &currentQuestion();
+      }
+      else if (m_networkQuestion.has_value())
+      {
+            question = &*m_networkQuestion;
+      }
+      if (question == nullptr || question->answerType != AnswerType::Select)
       {
             return answer;
       }
       const auto option = std::find_if(
-            m_networkQuestion->answerOptions.cbegin(),
-            m_networkQuestion->answerOptions.cend(),
+            question->answerOptions.cbegin(), question->answerOptions.cend(),
             [&answer](const AnswerOption &candidate)
             {
                   return candidate.id.compare(answer.trimmed(),
                                               Qt::CaseInsensitive) == 0;
             });
-      return option == m_networkQuestion->answerOptions.cend()
+      return option == question->answerOptions.cend()
                    ? answer
                    : QStringLiteral("%1 — %2").arg(option->id, option->text);
 }
@@ -796,6 +805,7 @@ void GameScreen::resizeEvent(QResizeEvent *event)
       fitDisplayedPixmap();
       fitAnswerOptionsTable();
       fitAppealPixmaps();
+      QTimer::singleShot(0, this, &GameScreen::positionAnswerBubbles);
 }
 
 void GameScreen::startPhaseTimer(GamePhase phase, unsigned int durationMs)
@@ -1261,6 +1271,7 @@ void GameScreen::returnToBoard()
 {
       stopReactionFlash();
       stopMediaPlayback();
+      clearAnswerBubbles();
       ui->AnswerBytton->setEnabled(false);
       ui->passButton->setEnabled(false);
       resetAnswerInputState();
@@ -2159,10 +2170,17 @@ void GameScreen::applyAnswerResult(bool isCorrect,
 
       m_answerResultApplied = true;
       m_submittedAnswer = submittedAnswer;
+      Player &player = m_players.front();
+      const QString displayedAnswer = displayAnswerText(submittedAnswer).trimmed();
+      if (player.answerBubble != nullptr && !displayedAnswer.isEmpty())
+      {
+            player.answerBubble->setText(displayedAnswer);
+            player.answerBubble->show();
+            positionAnswerBubbles();
+      }
       setSinglePlayerGlow(isCorrect ? PlayerGlow::Correct
                                     : PlayerGlow::Incorrect,
                           true);
-      Player &player = m_players.front();
       if (isCorrect)
       {
             player.balance += currentQuestion().price;
@@ -2611,6 +2629,7 @@ void GameScreen::applyPhase(const PhaseState &phase)
            phase.phase == SessionPhase::Finished))
       {
             stopMediaPlayback();
+            clearAnswerBubbles();
       }
       if (!phase.owner.isEmpty() &&
           (phase.phase == SessionPhase::Answering ||
@@ -2739,6 +2758,7 @@ void GameScreen::applyAnswerResult(const AnswerResult &result)
             }
       }
       rebuildNetworkPlayerCards();
+      showNetworkAnswerBubble(result);
       setNetworkControls();
       QTimer::singleShot(
             PlayerResultGlowDuration, this,
@@ -2786,7 +2806,10 @@ void GameScreen::applyForAllResult(const ForAllResult &result)
             if (answer.playerId == m_localPlayerId)
             {
                   applyAnswerResult(answer);
-                  break;
+            }
+            else
+            {
+                  showNetworkAnswerBubble(answer);
             }
       }
 }
@@ -2842,14 +2865,14 @@ void GameScreen::applyAppeal(const AppealState &appeal)
       m_appealQuestionMediaLabel->setVisible(
             !m_appealQuestionPixmap.isNull());
 
-      const QString submitted = appealAnswerText(appeal.submitted);
+      const QString submitted = displayAnswerText(appeal.submitted);
       m_appealSubmittedLabel->setText(
             submitted.isEmpty() ? tr("(no answer)") : submitted);
 
       QStringList correctAnswers;
       for (const QString &answer : appeal.rightAnswers)
       {
-            correctAnswers.push_back(appealAnswerText(answer));
+            correctAnswers.push_back(displayAnswerText(answer));
       }
       m_appealCorrectAnswerPixmap = {};
       if (appeal.answerMediaType == MediaType::Image &&
@@ -2999,6 +3022,7 @@ void GameScreen::applyWagerPrompt(const SecretWagerParameters &parameters)
 void GameScreen::applyNetworkQuestion(
       const QuestionPresentation &presentation)
 {
+      clearAnswerBubbles();
       m_networkQuestion = Question{};
       m_networkQuestion->price = presentation.price;
       m_networkQuestion->type = presentation.questionType;
@@ -3109,6 +3133,91 @@ void GameScreen::applyReactionWinner(const PlayerId &playerId)
       rebuildNetworkPlayerCards();
 }
 
+QLabel *GameScreen::createAnswerBubble()
+{
+      auto *bubble = new QLabel(this);
+      bubble->setAttribute(Qt::WA_TransparentForMouseEvents);
+      bubble->setAlignment(Qt::AlignCenter);
+      bubble->setWordWrap(true);
+      bubble->setMaximumWidth(220);
+      bubble->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+      bubble->setStyleSheet(QStringLiteral(
+            "QLabel { background-color: #ffffff; color: #111827; "
+            "border: 2px solid #d1d5db; border-radius: 12px; "
+            "padding: 8px; }"));
+      bubble->hide();
+      return bubble;
+}
+
+void GameScreen::showNetworkAnswerBubble(const AnswerResult &result)
+{
+      QLabel *bubble = m_networkAnswerLabels.value(result.playerId);
+      const QString answer = displayAnswerText(result.submitted).trimmed();
+      if (bubble == nullptr || answer.isEmpty())
+      {
+            return;
+      }
+      bubble->setText(answer);
+      bubble->setVisible(true);
+      positionAnswerBubbles();
+}
+
+void GameScreen::positionAnswerBubbles()
+{
+      const auto position = [this](QLabel *bubble, QLabel *avatar)
+      {
+            if (bubble == nullptr || avatar == nullptr || !bubble->isVisible())
+            {
+                  return;
+            }
+            const int bubbleWidth = std::clamp(avatar->width(), 120, 220);
+            bubble->setFixedWidth(bubbleWidth);
+            const int bubbleHeight = bubble->heightForWidth(bubbleWidth);
+            bubble->resize(bubbleWidth,
+                           bubbleHeight > 0 ? bubbleHeight
+                                            : bubble->sizeHint().height());
+            const QPoint avatarTop = avatar->mapTo(this, QPoint(0, 0));
+            const int maximumX = std::max(0, width() - bubble->width());
+            const int bubbleX = std::clamp(
+                  avatarTop.x() + (avatar->width() - bubble->width()) / 2,
+                  0, maximumX);
+            const int bubbleY =
+                  std::max(0, avatarTop.y() - bubble->height() - 8);
+            bubble->move(bubbleX, bubbleY);
+            bubble->raise();
+      };
+      for (const Player &player : m_players)
+      {
+            position(player.answerBubble, player.avatarLabel);
+      }
+      for (auto iterator = m_networkAnswerLabels.cbegin();
+           iterator != m_networkAnswerLabels.cend(); ++iterator)
+      {
+            position(iterator.value(),
+                     m_networkAvatarLabels.value(iterator.key()));
+      }
+}
+
+void GameScreen::clearAnswerBubbles()
+{
+      const auto clear = [](QLabel *bubble)
+      {
+            if (bubble != nullptr)
+            {
+                  bubble->clear();
+                  bubble->hide();
+            }
+      };
+      for (const Player &player : m_players)
+      {
+            clear(player.answerBubble);
+      }
+      for (QLabel *bubble : std::as_const(m_networkAnswerLabels))
+      {
+            clear(bubble);
+      }
+}
+
 void GameScreen::applyPlayerGlow(QLabel *avatar, PlayerGlow glow)
 {
       if (avatar == nullptr)
@@ -3202,6 +3311,7 @@ void GameScreen::rebuildNetworkPlayerCards()
                   avatar->installEventFilter(this);
                   auto *name = new QLabel;
                   auto *balance = new QLabel;
+                  QLabel *answerBubble = createAnswerBubble();
                   layout->addWidget(avatar);
                   layout->addWidget(name);
                   layout->addWidget(balance);
@@ -3209,6 +3319,7 @@ void GameScreen::rebuildNetworkPlayerCards()
                   m_networkAvatarLabels.insert(state.id, avatar);
                   m_networkNameLabels.insert(state.id, name);
                   m_networkBalanceLabels.insert(state.id, balance);
+                  m_networkAnswerLabels.insert(state.id, answerBubble);
             }
       }
 
@@ -3254,6 +3365,7 @@ void GameScreen::rebuildNetworkPlayerCards()
                                                    : state.nickname);
             balance->setText(tr("Balance: %1").arg(state.balance));
       }
+      QTimer::singleShot(0, this, &GameScreen::positionAnswerBubbles);
 }
 
 void GameScreen::clearNetworkPlayerCards()
@@ -3263,6 +3375,15 @@ void GameScreen::clearNetworkPlayerCards()
       m_networkAvatarLabels.clear();
       m_networkNameLabels.clear();
       m_networkBalanceLabels.clear();
+      for (const Player &player : m_players)
+      {
+            delete player.answerBubble;
+      }
+      for (QLabel *bubble : std::as_const(m_networkAnswerLabels))
+      {
+            delete bubble;
+      }
+      m_networkAnswerLabels.clear();
       m_networkCardProfiles.clear();
       m_players.clear();
 }

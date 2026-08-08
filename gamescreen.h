@@ -135,6 +135,7 @@ class GameScreen : public QWidget
             bool hasPassed{};
             QLabel *avatarLabel{};
             QLabel *balanceLabel{};
+            QLabel *answerBubble{};
             PlayerGlow glow{PlayerGlow::None};
       };
 
@@ -192,9 +193,13 @@ class GameScreen : public QWidget
       void applyNetworkBoard(const BoardState &board);
       void setupAppealPage();
       void fitAppealPixmaps();
-      QString appealAnswerText(const QString &answer) const;
+      QString displayAnswerText(const QString &answer) const;
       void submitAppealVote(bool accepted);
       void applyReactionWinner(const PlayerId &playerId);
+      QLabel *createAnswerBubble();
+      void showNetworkAnswerBubble(const AnswerResult &result);
+      void positionAnswerBubbles();
+      void clearAnswerBubbles();
       void applyPlayerGlow(QLabel *avatar, PlayerGlow glow);
       void setSinglePlayerGlow(PlayerGlow glow, bool clearAfterDelay);
       void rebuildNetworkPlayerCards();
@@ -275,6 +280,7 @@ class GameScreen : public QWidget
       QHash<PlayerId, QLabel *> m_networkAvatarLabels;
       QHash<PlayerId, QLabel *> m_networkNameLabels;
       QHash<PlayerId, QLabel *> m_networkBalanceLabels;
+      QHash<PlayerId, QLabel *> m_networkAnswerLabels;
       QHash<PlayerId, QByteArray> m_networkCardProfiles;
       QHash<PlayerId, PlayerGlow> m_playerGlows;
       BoardState m_networkBoard;

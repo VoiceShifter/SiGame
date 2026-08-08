@@ -564,6 +564,11 @@ void MultiplayerClient::handleFrame(const MultiplayerProtocol::Frame &frame)
                                    QStringLiteral("1");
                   answer.amount = fields.value(QStringLiteral("amount%1").arg(index)).toInt();
                   answer.balance = fields.value(QStringLiteral("balance%1").arg(index)).toInt();
+                  parseAnswerType(
+                        fields.value(QStringLiteral("answerKind%1").arg(index)),
+                        &answer.answerKind);
+                  answer.submitted =
+                        fields.value(QStringLiteral("submitted%1").arg(index));
                   result.results.push_back(answer);
             }
             emit forAllResultReceived(result);

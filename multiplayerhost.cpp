@@ -1601,6 +1601,12 @@ void MultiplayerHost::connectSessionSignals()
                                         stringValue(answer.amount));
                           fields.insert(QStringLiteral("balance%1").arg(index),
                                         stringValue(answer.balance));
+                          fields.insert(
+                                QStringLiteral("answerKind%1").arg(index),
+                                MultiplayerProtocol::answerTypeName(
+                                      static_cast<int>(answer.answerKind)));
+                          fields.insert(QStringLiteral("submitted%1").arg(index),
+                                        answer.submitted);
                     }
                     sendSessionEvent(QStringLiteral("FORALL_RESULT"), fields);
               });

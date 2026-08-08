@@ -141,6 +141,8 @@ class GameScreen : public QWidget
       void setProgressBarColor(GamePhase phase);
       void updateTimerProgress();
       void handlePhaseTimeout();
+      void pauseSinglePlayer();
+      void resumeSinglePlayer();
       void showAnswer();
       void returnToBoard();
       const Question &currentQuestion() const;
@@ -226,7 +228,15 @@ class GameScreen : public QWidget
       int m_currentThemeIndex{-1};
       int m_currentQuestionIndex{-1};
       unsigned int m_phaseDuration{};
+      unsigned int m_singlePlayerRemainingMs{};
       bool m_answerResultApplied{};
+      bool m_singlePlayerPaused{};
+      bool m_singlePlayerTimerWasActive{};
+      bool m_singlePlayerFlashWasActive{};
+      bool m_singlePlayerAnswerWasEnabled{};
+      bool m_singlePlayerPassWasEnabled{};
+      bool m_singlePlayerAnswerDialogWasVisible{};
+      QPointer<QWidget> m_pageBeforePause;
       QPixmap m_displayedPixmap;
       QPixmap m_appealQuestionPixmap;
       QPixmap m_appealCorrectAnswerPixmap;

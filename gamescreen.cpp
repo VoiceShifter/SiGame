@@ -255,7 +255,11 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       connect(ui->pushButton_3, &QPushButton::clicked, this,
               [this]()
               {
-                    if (m_mode != GameScreenMode::SinglePlayer && m_canPause)
+                    if (m_mode == GameScreenMode::SinglePlayer)
+                    {
+                          pauseSinglePlayer();
+                    }
+                    else if (m_canPause)
                     {
                           emit pauseRequested(true);
                     }
@@ -263,7 +267,11 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       connect(ui->pushButton_5, &QPushButton::clicked, this,
               [this]()
               {
-                    if (m_mode != GameScreenMode::SinglePlayer && m_networkPaused)
+                    if (m_mode == GameScreenMode::SinglePlayer)
+                    {
+                          resumeSinglePlayer();
+                    }
+                    else if (m_networkPaused)
                     {
                           emit pauseRequested(false);
                     }
@@ -437,6 +445,8 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       ui->appealButton->hide();
       if (m_mode == GameScreenMode::SinglePlayer)
       {
+            ui->pushButton_3->setEnabled(true);
+            ui->pushButton_5->setEnabled(false);
             returnToBoard();
       }
       else
@@ -738,6 +748,10 @@ void GameScreen::updateTimerProgress()
             setNetworkControls();
             return;
       }
+      if (m_singlePlayerPaused)
+      {
+            return;
+      }
       const qint64 remaining = std::max<qint64>(
             0, static_cast<qint64>(m_phaseDuration) -
                      m_globalTimer->elapsed());
@@ -778,6 +792,107 @@ void GameScreen::handlePhaseTimeout()
       case GamePhase::AppealVoting:
       case GamePhase::Finished:
             break;
+      }
+}
+
+void GameScreen::pauseSinglePlayer()
+{
+      if (m_mode != GameScreenMode::SinglePlayer || m_singlePlayerPaused)
+      {
+            return;
+      }
+
+      m_singlePlayerPaused = true;
+      m_singlePlayerTimerWasActive = m_tickTimer->isActive();
+      m_singlePlayerRemainingMs =
+            m_singlePlayerTimerWasActive
+                  ? static_cast<unsigned int>(std::max<qint64>(
+                          0, static_cast<qint64>(m_phaseDuration) -
+                                   m_globalTimer->elapsed()))
+                  : 0U;
+      m_pageBeforePause = ui->gameContentStack->currentWidget();
+      m_singlePlayerFlashWasActive = m_flashTimer->isActive();
+      m_singlePlayerAnswerWasEnabled = ui->AnswerBytton->isEnabled();
+      m_singlePlayerPassWasEnabled = ui->passButton->isEnabled();
+      m_singlePlayerAnswerDialogWasVisible =
+            m_answerDialog != nullptr && m_answerDialog->isVisible();
+
+      m_tickTimer->stop();
+      if (m_progressAnimation->state() == QAbstractAnimation::Running)
+      {
+            m_progressAnimation->pause();
+      }
+      if (m_singlePlayerFlashWasActive)
+      {
+            m_flashTimer->stop();
+      }
+      if (m_singlePlayerAnswerDialogWasVisible)
+      {
+            m_answerDialog->hide();
+      }
+      pauseMediaPlayback();
+      ui->AnswerBytton->setEnabled(false);
+      ui->passButton->setEnabled(false);
+      ui->pushButton_3->setEnabled(false);
+      ui->pushButton_5->setEnabled(true);
+      ui->gameContentStack->setCurrentWidget(ui->pausePage);
+}
+
+void GameScreen::resumeSinglePlayer()
+{
+      if (m_mode != GameScreenMode::SinglePlayer || !m_singlePlayerPaused)
+      {
+            return;
+      }
+
+      m_singlePlayerPaused = false;
+      if (m_pageBeforePause != nullptr)
+      {
+            ui->gameContentStack->setCurrentWidget(m_pageBeforePause);
+      }
+      resumeMediaPlayback();
+      if (m_singlePlayerAnswerDialogWasVisible && m_answerDialog != nullptr)
+      {
+            m_answerDialog->show();
+            m_answerDialog->raise();
+            m_answerDialog->activateWindow();
+      }
+      if (m_singlePlayerFlashWasActive &&
+          m_phase == GamePhase::WaitingForReaction)
+      {
+            m_flashTimer->start(120);
+      }
+      ui->AnswerBytton->setEnabled(m_singlePlayerAnswerWasEnabled);
+      ui->passButton->setEnabled(m_singlePlayerPassWasEnabled);
+      ui->pushButton_3->setEnabled(true);
+      ui->pushButton_5->setEnabled(false);
+
+      const bool restartTimer = m_singlePlayerTimerWasActive;
+      const unsigned int remainingMs = m_singlePlayerRemainingMs;
+      m_singlePlayerTimerWasActive = false;
+      m_singlePlayerFlashWasActive = false;
+      m_singlePlayerAnswerDialogWasVisible = false;
+      m_pageBeforePause.clear();
+
+      if (!restartTimer)
+      {
+            return;
+      }
+      m_phaseDuration = remainingMs;
+      m_globalTimer->restart();
+      if (m_progressAnimation->state() == QAbstractAnimation::Paused)
+      {
+            m_progressAnimation->resume();
+      }
+      if (remainingMs > 0)
+      {
+            m_tickTimer->start(250);
+      }
+      else
+      {
+            m_progressAnimation->stop();
+            ui->progressBar->setValue(ui->progressBar->minimum());
+            handlePhaseTimeout();
       }
 }
 
@@ -2250,6 +2365,14 @@ void GameScreen::applyPause(bool paused, SessionPhase phase,
 {
       if (m_mode == GameScreenMode::SinglePlayer)
       {
+            if (paused)
+            {
+                  pauseSinglePlayer();
+            }
+            else
+            {
+                  resumeSinglePlayer();
+            }
             return;
       }
       m_networkPaused = paused;

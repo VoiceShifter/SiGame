@@ -383,6 +383,7 @@ bool isKnownCommand(const QString &command)
             QStringLiteral("PHASE_RESUMED"),
             QStringLiteral("QUESTION_START"),
             QStringLiteral("REACTION_OPEN"),
+            QStringLiteral("REACTION_CLAIM"),
             QStringLiteral("REACTION_WINNER"),
             QStringLiteral("ANSWER_OWNER"),
             QStringLiteral("ANSWER_DRAFT"),

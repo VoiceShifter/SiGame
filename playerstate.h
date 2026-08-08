@@ -162,6 +162,9 @@ struct AppealState
       quint64 questionSequence{};
       PlayerId appellant;
       QString submitted;
+      QVector<QString> rightAnswers;
+      MediaType answerMediaType{MediaType::None};
+      QString answerMediaPath;
       QVector<PlayerId> voters;
       QHash<PlayerId, bool> votes;
       unsigned int durationMs{};

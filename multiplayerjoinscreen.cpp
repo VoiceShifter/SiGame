@@ -81,11 +81,13 @@ MultiplayerJoinScreen::MultiplayerJoinScreen(QWidget *parent)
                   hash.isEmpty() ? error : tr("Cached pack is ready."));
       }
       m_rosterList = new QListWidget(this);
+      auto *backButton = new QPushButton(tr("Back"), this);
       m_connectButton = new QPushButton(tr("Connect"), this);
       layout->addWidget(m_hashLabel);
       layout->addWidget(m_hostConfigLabel);
       layout->addWidget(m_statusLabel);
       layout->addWidget(m_rosterList);
+      layout->addWidget(backButton);
       layout->addWidget(m_connectButton);
 
       connect(packButton, &QPushButton::clicked, this,
@@ -94,6 +96,8 @@ MultiplayerJoinScreen::MultiplayerJoinScreen(QWidget *parent)
               &MultiplayerJoinScreen::chooseProfile);
       connect(m_connectButton, &QPushButton::clicked, this,
               &MultiplayerJoinScreen::connectOrDisconnect);
+      connect(backButton, &QPushButton::clicked, this,
+              &MultiplayerJoinScreen::cancelled);
 }
 
 void MultiplayerJoinScreen::choosePack()

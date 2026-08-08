@@ -618,6 +618,17 @@ void MultiplayerClient::handleFrame(const MultiplayerProtocol::Frame &frame)
             appeal.questionSequence = fields.value(QStringLiteral("questionSeq")).toULongLong();
             appeal.appellant = fields.value(QStringLiteral("appellant"));
             appeal.submitted = fields.value(QStringLiteral("submitted"));
+            const int rightCount =
+                  fields.value(QStringLiteral("rightCount")).toInt();
+            for (int index = 0; index < rightCount; ++index)
+            {
+                  appeal.rightAnswers.push_back(
+                        fields.value(QStringLiteral("right%1").arg(index)));
+            }
+            parseMediaType(fields.value(QStringLiteral("answerMediaType")),
+                           &appeal.answerMediaType);
+            appeal.answerMediaPath =
+                  fields.value(QStringLiteral("answerMediaPath"));
             appeal.durationMs = fields.value(QStringLiteral("durationMs")).toUInt();
             if (m_snapshotOpen)
             {

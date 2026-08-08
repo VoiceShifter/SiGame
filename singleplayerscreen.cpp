@@ -132,6 +132,8 @@ SinglePlayerScreen::SinglePlayerScreen(QWidget *parent)
               &SinglePlayerScreen::saveCache);
       connect(ui->createButton, &QPushButton::clicked, this,
               &SinglePlayerScreen::createGame);
+      connect(ui->backButton, &QPushButton::clicked, this,
+              &SinglePlayerScreen::cancelled);
 
       const std::vector<QString> cachedSettings = readCachedSettings();
       if (!cachedSettings.empty())

@@ -1230,16 +1230,28 @@ void MultiplayerHost::sendSnapshot(Peer &peer)
       if (snapshot.appeal.has_value())
       {
             const AppealState &appeal = *snapshot.appeal;
-            sendFrame(peer, QStringLiteral("APPEAL_OPEN"),
-                      {{QStringLiteral("appealId"), stringValue(appeal.appealId)},
-                       {QStringLiteral("questionSeq"),
-                        stringValue(appeal.questionSequence)},
-                       {QStringLiteral("appellant"), appeal.appellant},
-                       {QStringLiteral("submitted"), appeal.submitted},
-                       {QStringLiteral("voterCount"),
-                        stringValue(appeal.voters.size())},
-                       {QStringLiteral("durationMs"),
-                        stringValue(appeal.durationMs)}});
+            QMap<QString, QString> appealFields{
+                  {QStringLiteral("appealId"), stringValue(appeal.appealId)},
+                  {QStringLiteral("questionSeq"),
+                   stringValue(appeal.questionSequence)},
+                  {QStringLiteral("appellant"), appeal.appellant},
+                  {QStringLiteral("submitted"), appeal.submitted},
+                  {QStringLiteral("rightCount"),
+                   stringValue(appeal.rightAnswers.size())},
+                  {QStringLiteral("answerMediaType"),
+                   MultiplayerProtocol::mediaTypeName(
+                         static_cast<int>(appeal.answerMediaType))},
+                  {QStringLiteral("answerMediaPath"), appeal.answerMediaPath},
+                  {QStringLiteral("voterCount"),
+                   stringValue(appeal.voters.size())},
+                  {QStringLiteral("durationMs"),
+                   stringValue(appeal.durationMs)}};
+            for (int index = 0; index < appeal.rightAnswers.size(); ++index)
+            {
+                  appealFields.insert(QStringLiteral("right%1").arg(index),
+                                      appeal.rightAnswers[index]);
+            }
+            sendFrame(peer, QStringLiteral("APPEAL_OPEN"), appealFields);
       }
       if (m_session->phase() == SessionPhase::SecretTargetSelection &&
           peer.playerId == m_session->currentPicker())
@@ -1524,17 +1536,31 @@ void MultiplayerHost::connectSessionSignals()
       connect(m_session, &GameSession::appealOpened, this,
               [this](const AppealState &appeal)
               {
-                    sendSessionEvent(
-                          QStringLiteral("APPEAL_OPEN"),
-                          {{QStringLiteral("appealId"), stringValue(appeal.appealId)},
-                           {QStringLiteral("questionSeq"),
-                            stringValue(appeal.questionSequence)},
-                           {QStringLiteral("appellant"), appeal.appellant},
-                           {QStringLiteral("submitted"), appeal.submitted},
-                           {QStringLiteral("voterCount"),
-                            stringValue(appeal.voters.size())},
-                           {QStringLiteral("durationMs"),
-                            stringValue(appeal.durationMs)}});
+                    QMap<QString, QString> fields{
+                          {QStringLiteral("appealId"),
+                           stringValue(appeal.appealId)},
+                          {QStringLiteral("questionSeq"),
+                           stringValue(appeal.questionSequence)},
+                          {QStringLiteral("appellant"), appeal.appellant},
+                          {QStringLiteral("submitted"), appeal.submitted},
+                          {QStringLiteral("rightCount"),
+                           stringValue(appeal.rightAnswers.size())},
+                          {QStringLiteral("answerMediaType"),
+                           MultiplayerProtocol::mediaTypeName(
+                                 static_cast<int>(appeal.answerMediaType))},
+                          {QStringLiteral("answerMediaPath"),
+                           appeal.answerMediaPath},
+                          {QStringLiteral("voterCount"),
+                           stringValue(appeal.voters.size())},
+                          {QStringLiteral("durationMs"),
+                           stringValue(appeal.durationMs)}};
+                    for (int index = 0;
+                         index < appeal.rightAnswers.size(); ++index)
+                    {
+                          fields.insert(QStringLiteral("right%1").arg(index),
+                                        appeal.rightAnswers[index]);
+                    }
+                    sendSessionEvent(QStringLiteral("APPEAL_OPEN"), fields);
               });
       connect(m_session, &GameSession::appealFinished, this,
               [this](const AppealResult &result)
@@ -1668,7 +1694,21 @@ void MultiplayerHost::startPings()
               });
       connect(m_pingWorker, &PingWorker::averageUpdated, this,
               [this](const PlayerId &playerId, double rttMs)
-              { m_remoteRtt.insert(playerId, rttMs); });
+              {
+                    m_remoteRtt.insert(playerId, rttMs);
+                    double maximumRtt = 0.0;
+                    for (auto iterator = m_remoteRtt.cbegin();
+                         iterator != m_remoteRtt.cend(); ++iterator)
+                    {
+                          if (isConnected(iterator.key()))
+                          {
+                                maximumRtt =
+                                      std::max(maximumRtt, iterator.value());
+                          }
+                    }
+                    m_session->setReactionDecisionWindowMs(
+                          static_cast<unsigned int>(std::ceil(maximumRtt)));
+              });
       connect(m_session, &GameSession::playersChanged, m_pingWorker,
               [worker = m_pingWorker, localId = m_localPlayerId](
                     const QVector<PlayerState> &players)

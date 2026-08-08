@@ -10,6 +10,11 @@ MainWindow::MainWindow(QWidget *parent)
         exitPopup(new QMessageBox(this))
 {
       ui->setupUi(this);
+      mainScreen = takeCentralWidget();
+      stack->addWidget(mainScreen);
+      setCentralWidget(stack);
+      stack->setCurrentWidget(mainScreen);
+
       exitPopup->setWindowTitle(tr("Exit Game"));
       exitPopup->setText(tr("Are you sure you want to exit? Any unsaved "
                             "changes will be lost."));
@@ -19,6 +24,18 @@ MainWindow::MainWindow(QWidget *parent)
       auto *quitShortcut = new QShortcut(QKeySequence("Ctrl+Q"), this);
       connect(quitShortcut, &QShortcut::activated, this,
               &MainWindow::showExitPopup);
+      auto *backShortcut =
+            new QShortcut(QKeySequence(Qt::Key_Escape), this);
+      connect(backShortcut, &QShortcut::activated, this,
+              [this]()
+              {
+                    const QWidget *current = stack->currentWidget();
+                    if (current == singleScreen || current == hostScreen ||
+                        current == joinScreen)
+                    {
+                          returnToMainMenu();
+                    }
+              });
       connect(ui->joinButton, &QPushButton::clicked, this,
               &MainWindow::loadJoinSettings);
       connect(ui->singleButton, &QPushButton::clicked, this,
@@ -36,9 +53,11 @@ void MainWindow::loadSingleSettings()
       qDebug() << "loading single";
       singleScreen = new SinglePlayerScreen();
       stack->addWidget(singleScreen);
-      setCentralWidget(stack);
+      stack->setCurrentWidget(singleScreen);
       connect(singleScreen, &SinglePlayerScreen::SingleGameStarted, this,
               &MainWindow::loadSingleGame);
+      connect(singleScreen, &SinglePlayerScreen::cancelled, this,
+              &MainWindow::returnToMainMenu);
 }
 
 void MainWindow::loadSingleGame(int PlayersCount, const QString &GamepackPath,
@@ -55,7 +74,6 @@ void MainWindow::loadSingleGame(int PlayersCount, const QString &GamepackPath,
                                   questionDuration, questionPickDuration,
                                   answerWaitDuration);
       stack->addWidget(gameScreen);
-      setCentralWidget(stack);
       stack->setCurrentWidget(gameScreen);
 }
 
@@ -65,20 +83,22 @@ void MainWindow::loadMultiplayer()
 {
       hostScreen = new MultiplayerHostScreen(this);
       stack->addWidget(hostScreen);
-      setCentralWidget(stack);
       stack->setCurrentWidget(hostScreen);
       connect(hostScreen, &MultiplayerHostScreen::gameStarted, this,
               &MainWindow::loadHostGame);
+      connect(hostScreen, &MultiplayerHostScreen::cancelled, this,
+              &MainWindow::returnToMainMenu);
 }
 
 void MainWindow::loadJoinSettings()
 {
       joinScreen = new MultiplayerJoinScreen(this);
       stack->addWidget(joinScreen);
-      setCentralWidget(stack);
       stack->setCurrentWidget(joinScreen);
       connect(joinScreen, &MultiplayerJoinScreen::gameStarted, this,
               &MainWindow::loadClientGame);
+      connect(joinScreen, &MultiplayerJoinScreen::cancelled, this,
+              &MainWindow::returnToMainMenu);
 }
 
 void MainWindow::loadHostGame(MultiplayerHost *host, const QString &packPath)
@@ -96,7 +116,6 @@ void MainWindow::loadHostGame(MultiplayerHost *host, const QString &packPath)
             static_cast<int>(config.answerWaitDurationMs / 1000U),
             GameScreenMode::MultiplayerHost);
       stack->addWidget(gameScreen);
-      setCentralWidget(stack);
       stack->setCurrentWidget(gameScreen);
       gameScreen->bindHost(host);
 }
@@ -117,9 +136,47 @@ void MainWindow::loadClientGame(MultiplayerClient *client,
             static_cast<int>(config.answerWaitDurationMs / 1000U),
             GameScreenMode::MultiplayerClient);
       stack->addWidget(gameScreen);
-      setCentralWidget(stack);
       stack->setCurrentWidget(gameScreen);
       gameScreen->bindClient(client);
+}
+
+void MainWindow::returnToMainMenu()
+{
+      QWidget *settingsScreen = stack->currentWidget();
+      if (settingsScreen == hostScreen)
+      {
+            if (hostScreen->host() != nullptr)
+            {
+                  hostScreen->host()->stop();
+            }
+      }
+      else if (settingsScreen == joinScreen)
+      {
+            if (joinScreen->client() != nullptr)
+            {
+                  joinScreen->client()->disconnectFromHost();
+            }
+      }
+      else if (settingsScreen != singleScreen)
+      {
+            return;
+      }
+
+      stack->setCurrentWidget(mainScreen);
+      stack->removeWidget(settingsScreen);
+      if (settingsScreen == singleScreen)
+      {
+            singleScreen = nullptr;
+      }
+      else if (settingsScreen == hostScreen)
+      {
+            hostScreen = nullptr;
+      }
+      else if (settingsScreen == joinScreen)
+      {
+            joinScreen = nullptr;
+      }
+      settingsScreen->deleteLater();
 }
 
 void MainWindow::showExitPopup()

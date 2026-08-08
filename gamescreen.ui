@@ -305,20 +305,6 @@ li.checked::marker { content: &quot;\2612&quot;; }
        </property>
       </widget>
      </item>
-     <item>
-      <widget class="QPushButton" name="appealYesButton">
-       <property name="text">
-        <string>Yes</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="appealNoButton">
-       <property name="text">
-        <string>No</string>
-       </property>
-      </widget>
-     </item>
     </layout>
    </item>
    <item>

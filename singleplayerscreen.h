@@ -22,6 +22,7 @@ class SinglePlayerScreen : public QWidget
       void pickProfilePicture();
       void createGame();
     signals:
+      void cancelled();
       void SingleGameStarted(int Players, const QString &GamepackPath,
                              const QString &ProfilePicturePath,
                              const QString &Nickname, int answerDuration,

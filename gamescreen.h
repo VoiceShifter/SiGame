@@ -165,6 +165,10 @@ class GameScreen : public QWidget
                             double *aspectRatio) const;
       void applyNetworkQuestion(const QuestionPresentation &presentation);
       void applyNetworkBoard(const BoardState &board);
+      void setupAppealPage();
+      void fitAppealPixmaps();
+      QString appealAnswerText(const QString &answer) const;
+      void submitAppealVote(bool accepted);
       void applyReactionWinner(const PlayerId &playerId);
       void applyPlayerGlow(QLabel *avatar, PlayerGlow glow);
       void setSinglePlayerGlow(PlayerGlow glow, bool clearAfterDelay);
@@ -207,6 +211,8 @@ class GameScreen : public QWidget
       unsigned int m_phaseDuration{};
       bool m_answerResultApplied{};
       QPixmap m_displayedPixmap;
+      QPixmap m_appealQuestionPixmap;
+      QPixmap m_appealCorrectAnswerPixmap;
       QString m_questionFrameStyleSheet;
       int m_flashStep{};
 
@@ -224,6 +230,7 @@ class GameScreen : public QWidget
       quint64 m_localActionId{1};
       bool m_networkAnswerSubmitted{};
       bool m_networkAnswerInputOpened{};
+      bool m_networkReactionClaimed{};
       bool m_networkPaused{};
       bool m_canPause{};
       bool m_canAnswer{};
@@ -231,8 +238,16 @@ class GameScreen : public QWidget
       bool m_canAppeal{};
       bool m_secretTargetSelection{};
       bool m_forAllAnswering{};
+      bool m_appealVoteSubmitted{};
       PlayerId m_appealAppellant;
       quint64 m_appealId{};
+      QWidget *m_appealPage{};
+      QLabel *m_appealQuestionLabel{};
+      QLabel *m_appealQuestionMediaLabel{};
+      QLabel *m_appealSubmittedHeadingLabel{};
+      QLabel *m_appealSubmittedLabel{};
+      QLabel *m_appealCorrectAnswerLabel{};
+      QLabel *m_appealCorrectAnswerMediaLabel{};
       MultiplayerHost *m_host{};
       MultiplayerClient *m_client{};
 };

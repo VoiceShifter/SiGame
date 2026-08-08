@@ -26,6 +26,7 @@ class MainWindow : public QMainWindow
     private:
       Ui::MainWindow *ui;
       QStackedWidget *stack;
+      QWidget *mainScreen{};
       SinglePlayerScreen *singleScreen{};
       GameScreen *gameScreen{};
       MultiplayerHostScreen *hostScreen{};
@@ -44,6 +45,7 @@ class MainWindow : public QMainWindow
       void loadJoinSettings();
       void loadHostGame(MultiplayerHost *host, const QString &packPath);
       void loadClientGame(MultiplayerClient *client, const QString &packPath);
+      void returnToMainMenu();
       void showExitPopup();
 };
 

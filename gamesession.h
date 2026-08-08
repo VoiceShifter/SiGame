@@ -51,6 +51,7 @@ class GameSession : public QObject
       std::optional<QuestionPresentation> currentPresentation() const;
       QString secretSelectionMode() const;
       bool hasActiveQuestion() const;
+      void setReactionDecisionWindowMs(unsigned int durationMs);
 
     public slots:
       void startGame();
@@ -185,9 +186,10 @@ class GameSession : public QObject
       QTimer m_timer;
       QElapsedTimer m_clock;
       qint64 m_deadlineMs{};
-      qint64 m_reactionDeadlineMs{};
+      unsigned int m_remainingReactionMs{};
       unsigned int m_phaseDuration{};
       unsigned int m_remainingMs{};
+      unsigned int m_reactionDecisionWindowMs{250U};
       bool m_paused{};
       bool m_started{};
       SessionPhase m_phase{SessionPhase::Lobby};

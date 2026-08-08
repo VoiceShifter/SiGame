@@ -58,6 +58,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
 {
       m_mode = mode;
       ui->setupUi(this);
+      setupAppealPage();
       ui->progressBar->setRange(0, 1000);
       m_progressAnimation->setTargetObject(ui->progressBar);
       m_progressAnimation->setPropertyName("value");
@@ -125,10 +126,16 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
               {
                     if (m_mode != GameScreenMode::SinglePlayer)
                     {
+                          if (m_phase == GamePhase::AppealVoting)
+                          {
+                                submitAppealVote(true);
+                                return;
+                          }
                           if (m_phase == GamePhase::WaitingForReaction)
                           {
                                 ui->AnswerBytton->setEnabled(false);
                                 ui->passButton->setEnabled(false);
+                                m_networkReactionClaimed = true;
                                 stopReactionFlash();
                                 const unsigned int elapsed =
                                       m_reactionElapsedTimer.isValid()
@@ -175,6 +182,11 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
               {
                     if (m_mode != GameScreenMode::SinglePlayer)
                     {
+                          if (m_phase == GamePhase::AppealVoting)
+                          {
+                                submitAppealVote(false);
+                                return;
+                          }
                           ui->passButton->setEnabled(false);
                           emit passRequested();
                           return;
@@ -212,10 +224,6 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
               });
       connect(ui->appealButton, &QPushButton::clicked, this,
               [this]() { emit appealRequested(); });
-      connect(ui->appealYesButton, &QPushButton::clicked, this,
-              [this]() { emit appealVoteSubmitted(true); });
-      connect(ui->appealNoButton, &QPushButton::clicked, this,
-              [this]() { emit appealVoteSubmitted(false); });
 
       m_questionFrameStyleSheet =
             ui->questionFrame->styleSheet() +
@@ -381,8 +389,6 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       ui->answerOptionsContainer->hide();
       ui->passButton->setEnabled(false);
       ui->appealButton->hide();
-      ui->appealYesButton->hide();
-      ui->appealNoButton->hide();
       if (m_mode == GameScreenMode::SinglePlayer)
       {
             returnToBoard();
@@ -399,6 +405,133 @@ GameScreen::~GameScreen()
 {
       delete m_globalTimer;
       delete ui;
+}
+
+void GameScreen::setupAppealPage()
+{
+      m_appealPage = new QWidget(ui->gameContentStack);
+      m_appealPage->setObjectName(QStringLiteral("appealPage"));
+      auto *layout = new QVBoxLayout(m_appealPage);
+      layout->setContentsMargins(24, 24, 24, 24);
+      layout->setSpacing(12);
+
+      auto *title = new QLabel(tr("Appeal in progress"), m_appealPage);
+      title->setObjectName(QStringLiteral("appealTitleLabel"));
+      QFont titleFont = title->font();
+      titleFont.setPointSize(22);
+      titleFont.setBold(true);
+      title->setFont(titleFont);
+      title->setAlignment(Qt::AlignCenter);
+      title->setStyleSheet(QStringLiteral(
+            "padding: 10px; border: 2px solid #6c63ff; border-radius: 6px;"));
+      layout->addWidget(title);
+
+      auto addHeading = [this, layout](const QString &text)
+      {
+            auto *heading = new QLabel(text, m_appealPage);
+            QFont font = heading->font();
+            font.setBold(true);
+            heading->setFont(font);
+            layout->addWidget(heading);
+            return heading;
+      };
+      addHeading(tr("Question"));
+      m_appealQuestionLabel = new QLabel(m_appealPage);
+      m_appealQuestionLabel->setObjectName(
+            QStringLiteral("appealQuestionLabel"));
+      m_appealQuestionLabel->setAlignment(Qt::AlignCenter);
+      m_appealQuestionLabel->setWordWrap(true);
+      layout->addWidget(m_appealQuestionLabel);
+
+      m_appealQuestionMediaLabel = new QLabel(m_appealPage);
+      m_appealQuestionMediaLabel->setObjectName(
+            QStringLiteral("appealQuestionMediaLabel"));
+      m_appealQuestionMediaLabel->setAlignment(Qt::AlignCenter);
+      m_appealQuestionMediaLabel->setMinimumHeight(100);
+      m_appealQuestionMediaLabel->setSizePolicy(QSizePolicy::Expanding,
+                                                QSizePolicy::Expanding);
+      m_appealQuestionMediaLabel->hide();
+      layout->addWidget(m_appealQuestionMediaLabel, 1);
+
+      m_appealSubmittedHeadingLabel = addHeading(tr("Player answer"));
+      m_appealSubmittedHeadingLabel->setObjectName(
+            QStringLiteral("appealSubmittedHeadingLabel"));
+      m_appealSubmittedLabel = new QLabel(m_appealPage);
+      m_appealSubmittedLabel->setObjectName(
+            QStringLiteral("appealSubmittedLabel"));
+      m_appealSubmittedLabel->setWordWrap(true);
+      m_appealSubmittedLabel->setStyleSheet(
+            QStringLiteral("padding: 8px; border: 1px solid #c62828;"));
+      layout->addWidget(m_appealSubmittedLabel);
+
+      addHeading(tr("Correct answer"));
+      m_appealCorrectAnswerLabel = new QLabel(m_appealPage);
+      m_appealCorrectAnswerLabel->setObjectName(
+            QStringLiteral("appealCorrectAnswerLabel"));
+      m_appealCorrectAnswerLabel->setWordWrap(true);
+      m_appealCorrectAnswerLabel->setStyleSheet(
+            QStringLiteral("padding: 8px; border: 1px solid #2e7d32;"));
+      layout->addWidget(m_appealCorrectAnswerLabel);
+
+      m_appealCorrectAnswerMediaLabel = new QLabel(m_appealPage);
+      m_appealCorrectAnswerMediaLabel->setObjectName(
+            QStringLiteral("appealCorrectAnswerMediaLabel"));
+      m_appealCorrectAnswerMediaLabel->setAlignment(Qt::AlignCenter);
+      m_appealCorrectAnswerMediaLabel->setMinimumHeight(100);
+      m_appealCorrectAnswerMediaLabel->setSizePolicy(QSizePolicy::Expanding,
+                                                     QSizePolicy::Expanding);
+      m_appealCorrectAnswerMediaLabel->hide();
+      layout->addWidget(m_appealCorrectAnswerMediaLabel, 1);
+      ui->gameContentStack->addWidget(m_appealPage);
+}
+
+void GameScreen::fitAppealPixmaps()
+{
+      const auto fit = [](const QPixmap &source, QLabel *label)
+      {
+            if (source.isNull() || label == nullptr || !label->isVisible())
+            {
+                  return;
+            }
+            label->setPixmap(source.scaled(label->contentsRect().size(),
+                                            Qt::KeepAspectRatio,
+                                            Qt::SmoothTransformation));
+      };
+      fit(m_appealQuestionPixmap, m_appealQuestionMediaLabel);
+      fit(m_appealCorrectAnswerPixmap, m_appealCorrectAnswerMediaLabel);
+}
+
+QString GameScreen::appealAnswerText(const QString &answer) const
+{
+      if (!m_networkQuestion.has_value() ||
+          m_networkQuestion->answerType != AnswerType::Select)
+      {
+            return answer;
+      }
+      const auto option = std::find_if(
+            m_networkQuestion->answerOptions.cbegin(),
+            m_networkQuestion->answerOptions.cend(),
+            [&answer](const AnswerOption &candidate)
+            {
+                  return candidate.id.compare(answer.trimmed(),
+                                              Qt::CaseInsensitive) == 0;
+            });
+      return option == m_networkQuestion->answerOptions.cend()
+                   ? answer
+                   : QStringLiteral("%1 — %2").arg(option->id, option->text);
+}
+
+void GameScreen::submitAppealVote(bool accepted)
+{
+      if (m_phase != SessionPhase::AppealVoting || m_appealId == 0 ||
+          m_appealAppellant == m_localPlayerId || m_appealVoteSubmitted ||
+          m_networkPaused)
+      {
+            return;
+      }
+      m_appealVoteSubmitted = true;
+      setNetworkControls();
+      emit appealVoteSubmitted(accepted);
 }
 
 bool GameScreen::eventFilter(QObject *watched, QEvent *event)
@@ -498,6 +631,7 @@ void GameScreen::resizeEvent(QResizeEvent *event)
       QWidget::resizeEvent(event);
       fitDisplayedPixmap();
       fitAnswerOptionsTable();
+      fitAppealPixmaps();
 }
 
 void GameScreen::startPhaseTimer(GamePhase phase, unsigned int durationMs)
@@ -1383,6 +1517,7 @@ void GameScreen::resetAnswerInputState()
       m_submittedAnswer.clear();
       m_networkAnswerSubmitted = false;
       m_networkAnswerInputOpened = false;
+      m_networkReactionClaimed = false;
       clearAnswerOptions();
       ui->questionTextLabel->setMinimumHeight(0);
       ui->questionTextLabel->setMaximumHeight(QWIDGETSIZE_MAX);
@@ -1393,8 +1528,9 @@ void GameScreen::resetAnswerInputState()
       m_displayedPixmapRect = {};
       ui->questionMediaLabel->setCursor(Qt::ArrowCursor);
       ui->appealButton->hide();
-      ui->appealYesButton->hide();
-      ui->appealNoButton->hide();
+      m_appealVoteSubmitted = false;
+      m_appealAppellant.clear();
+      m_appealId = 0;
 }
 
 bool GameScreen::parsePointAnswer(const QString &value, QPointF *point,
@@ -1647,6 +1783,9 @@ void GameScreen::applyPhase(const PhaseState &phase)
       {
             return;
       }
+      const bool phaseChanged =
+            phase.phaseSequence != m_networkPhaseSequence ||
+            phase.phase != m_phase;
       m_networkPhase = phase;
       m_phase = phase.phase;
       m_networkPhaseSequence = phase.phaseSequence;
@@ -1661,7 +1800,23 @@ void GameScreen::applyPhase(const PhaseState &phase)
       m_secretTargetSelection = phase.phase == SessionPhase::SecretTargetSelection;
       m_canPause = phase.phase == SessionPhase::PickingQuestion ||
                    phase.phase == SessionPhase::ReadingQuestion;
-      if (phase.phase == SessionPhase::PickingQuestion)
+      if (phaseChanged && phase.phase != SessionPhase::AppealVoting)
+      {
+            m_appealVoteSubmitted = false;
+            m_appealAppellant.clear();
+            m_appealId = 0;
+      }
+      if (phase.phase == SessionPhase::AppealVoting)
+      {
+            if (phaseChanged)
+            {
+                  m_appealVoteSubmitted = true;
+                  m_appealAppellant.clear();
+                  m_appealId = 0;
+            }
+            ui->gameContentStack->setCurrentWidget(m_appealPage);
+      }
+      else if (phase.phase == SessionPhase::PickingQuestion)
       {
             m_pickerId = phase.owner;
             ui->gameContentStack->setCurrentWidget(ui->boardPage);
@@ -1674,10 +1829,14 @@ void GameScreen::applyPhase(const PhaseState &phase)
       }
       if (phase.phase == SessionPhase::WaitingForReaction)
       {
-            m_reactionElapsedTimer.restart();
-            startReactionFlash();
+            if (phaseChanged)
+            {
+                  m_networkReactionClaimed = false;
+                  m_reactionElapsedTimer.restart();
+                  startReactionFlash();
+            }
       }
-      else
+      else if (phaseChanged)
       {
             m_reactionElapsedTimer.invalidate();
             stopReactionFlash();
@@ -1787,17 +1946,90 @@ void GameScreen::applyAppeal(const AppealState &appeal)
       }
       m_appealId = appeal.appealId;
       m_appealAppellant = appeal.appellant;
+      m_appealVoteSubmitted = appeal.votes.contains(m_localPlayerId);
+
+      QString appellantName = appeal.appellant;
+      for (const PlayerState &state : m_networkPlayers)
+      {
+            if (state.id == appeal.appellant)
+            {
+                  appellantName = state.nickname.isEmpty() ? tr("Unnamed")
+                                                           : state.nickname;
+                  break;
+            }
+      }
+      m_appealSubmittedHeadingLabel->setText(
+            tr("%1's answer").arg(appellantName));
+
+      QString questionText;
+      m_appealQuestionPixmap = {};
+      if (m_networkQuestion.has_value())
+      {
+            questionText = m_networkQuestion->text;
+            if (m_networkQuestion->mediaType == MediaType::Image &&
+                !m_networkQuestion->mediaPath.isEmpty())
+            {
+                  m_appealQuestionPixmap.load(
+                        QDir(m_gamepackPath)
+                              .filePath(m_networkQuestion->mediaPath));
+            }
+            else if (m_networkQuestion->mediaType != MediaType::None &&
+                     !m_networkQuestion->mediaPath.isEmpty())
+            {
+                  questionText += tr("\nMedia: %1")
+                                        .arg(m_networkQuestion->mediaPath);
+            }
+      }
+      if (questionText.isEmpty() && m_appealQuestionPixmap.isNull())
+      {
+            questionText = tr("(no question text)");
+      }
+      m_appealQuestionLabel->setText(questionText);
+      m_appealQuestionMediaLabel->setVisible(
+            !m_appealQuestionPixmap.isNull());
+
+      const QString submitted = appealAnswerText(appeal.submitted);
+      m_appealSubmittedLabel->setText(
+            submitted.isEmpty() ? tr("(no answer)") : submitted);
+
+      QStringList correctAnswers;
+      for (const QString &answer : appeal.rightAnswers)
+      {
+            correctAnswers.push_back(appealAnswerText(answer));
+      }
+      m_appealCorrectAnswerPixmap = {};
+      if (appeal.answerMediaType == MediaType::Image &&
+          !appeal.answerMediaPath.isEmpty())
+      {
+            m_appealCorrectAnswerPixmap.load(
+                  QDir(m_gamepackPath).filePath(appeal.answerMediaPath));
+      }
+      else if (appeal.answerMediaType != MediaType::None &&
+               !appeal.answerMediaPath.isEmpty())
+      {
+            correctAnswers.push_back(
+                  tr("Media: %1").arg(appeal.answerMediaPath));
+      }
+      m_appealCorrectAnswerLabel->setText(
+            correctAnswers.isEmpty()
+                  ? (m_appealCorrectAnswerPixmap.isNull()
+                           ? tr("(no text answer)")
+                           : tr("See answer media below."))
+                  : correctAnswers.join(QLatin1Char('\n')));
+      m_appealCorrectAnswerMediaLabel->setVisible(
+            !m_appealCorrectAnswerPixmap.isNull());
+
       ui->appealButton->hide();
-      ui->appealYesButton->setVisible(appeal.appellant != m_localPlayerId);
-      ui->appealNoButton->setVisible(appeal.appellant != m_localPlayerId);
+      ui->gameContentStack->setCurrentWidget(m_appealPage);
+      QTimer::singleShot(0, this, &GameScreen::fitAppealPixmaps);
       setNetworkControls();
 }
 
 void GameScreen::applyAppealResult(const AppealResult &)
 {
+      m_appealVoteSubmitted = true;
       ui->appealButton->hide();
-      ui->appealYesButton->hide();
-      ui->appealNoButton->hide();
+      setNetworkControls();
 }
 
 void GameScreen::applyPause(bool paused, SessionPhase phase,
@@ -2133,30 +2365,50 @@ void GameScreen::setNetworkControls()
       }
       const bool eligible = local != nullptr && local->connected &&
                             !local->hasPassed && !local->answeredIncorrectly;
+      const bool appealVoting = m_phase == SessionPhase::AppealVoting;
       m_canAppeal = local != nullptr && local->mayAppeal;
-      if (m_phase == SessionPhase::WaitingForReaction)
-      {
-            m_canAnswer = eligible;
-            m_canPass = eligible;
-      }
-      else if (m_phase == SessionPhase::Answering)
-      {
-            m_canAnswer = eligible && m_answerOwnerId == m_localPlayerId;
-            m_canPass = eligible && m_answerOwnerId != m_localPlayerId;
-      }
-      else if (m_phase == SessionPhase::ForAllAnswering)
-      {
-            m_canAnswer = eligible && (local == nullptr || !local->hasAnsweredForAll);
-            m_canPass = m_canAnswer;
-      }
-      else
+      ui->AnswerBytton->setText(appealVoting ? tr("Yes") : tr("Answer"));
+      ui->passButton->setText(appealVoting ? tr("No") : tr("Pass"));
+      if (appealVoting)
       {
             m_canAnswer = false;
             m_canPass = false;
+            const bool canVote = local != nullptr && local->connected &&
+                                 m_appealId != 0 &&
+                                 m_appealAppellant != m_localPlayerId &&
+                                 !m_appealVoteSubmitted && !m_networkPaused;
+            ui->AnswerBytton->setEnabled(canVote);
+            ui->passButton->setEnabled(canVote);
       }
-      ui->AnswerBytton->setEnabled(m_canAnswer && !m_networkAnswerSubmitted &&
-                                   !m_networkPaused);
-      ui->passButton->setEnabled(m_canPass && !m_networkPaused);
+      else
+      {
+            if (m_phase == SessionPhase::WaitingForReaction)
+            {
+                  m_canAnswer = eligible;
+                  m_canPass = eligible;
+            }
+            else if (m_phase == SessionPhase::Answering)
+            {
+                  m_canAnswer = eligible && m_answerOwnerId == m_localPlayerId;
+                  m_canPass = eligible && m_answerOwnerId != m_localPlayerId;
+            }
+            else if (m_phase == SessionPhase::ForAllAnswering)
+            {
+                  m_canAnswer = eligible &&
+                                (local == nullptr || !local->hasAnsweredForAll);
+                  m_canPass = m_canAnswer;
+            }
+            else
+            {
+                  m_canAnswer = false;
+                  m_canPass = false;
+            }
+            ui->AnswerBytton->setEnabled(
+                  m_canAnswer && !m_networkAnswerSubmitted && !m_networkPaused &&
+                  !(m_phase == SessionPhase::WaitingForReaction &&
+                    m_networkReactionClaimed));
+            ui->passButton->setEnabled(m_canPass && !m_networkPaused);
+      }
       ui->pushButton_3->setEnabled(m_canPause && !m_networkPaused);
       ui->pushButton_5->setEnabled(m_canPause && m_networkPaused);
       ui->appealButton->setVisible(m_canAppeal &&
@@ -2274,10 +2526,25 @@ void GameScreen::setNetworkPhaseTimer(const PhaseState &phase)
       {
             stopReactionFlash();
       }
-      m_phaseDuration = phase.remainingMs;
+      const unsigned int duration =
+            phase.phase == SessionPhase::WaitingForReaction &&
+                        m_answerWaitDuration > 0
+                  ? m_answerWaitDuration
+                  : (phase.durationMs > 0 ? phase.durationMs
+                                          : phase.remainingMs);
+      m_phaseDuration = duration;
       m_globalTimer->restart();
       m_progressAnimation->stop();
-      m_progressAnimation->setStartValue(ui->progressBar->maximum());
+      const unsigned int remaining = std::min(phase.remainingMs, duration);
+      const int startValue =
+            duration == 0
+                  ? ui->progressBar->minimum()
+                  : ui->progressBar->minimum() +
+                          static_cast<int>(
+                                (ui->progressBar->maximum() -
+                                 ui->progressBar->minimum()) *
+                                (static_cast<double>(remaining) / duration));
+      m_progressAnimation->setStartValue(startValue);
       m_progressAnimation->setEndValue(ui->progressBar->minimum());
       m_progressAnimation->setDuration(static_cast<int>(phase.remainingMs));
       if (phase.remainingMs > 0)

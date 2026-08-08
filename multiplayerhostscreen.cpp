@@ -86,10 +86,12 @@ MultiplayerHostScreen::MultiplayerHostScreen(QWidget *parent)
                   hash.isEmpty() ? error : tr("Cached pack is ready."));
       }
       m_rosterList = new QListWidget(this);
+      auto *backButton = new QPushButton(tr("Back"), this);
       m_hostButton = new QPushButton(tr("Start hosting"), this);
       layout->addWidget(m_hashLabel);
       layout->addWidget(m_statusLabel);
       layout->addWidget(m_rosterList);
+      layout->addWidget(backButton);
       layout->addWidget(m_hostButton);
 
       connect(packButton, &QPushButton::clicked, this,
@@ -98,6 +100,8 @@ MultiplayerHostScreen::MultiplayerHostScreen(QWidget *parent)
               &MultiplayerHostScreen::chooseProfile);
       connect(m_hostButton, &QPushButton::clicked, this,
               &MultiplayerHostScreen::hostOrStart);
+      connect(backButton, &QPushButton::clicked, this,
+              &MultiplayerHostScreen::cancelled);
 }
 
 void MultiplayerHostScreen::choosePack()

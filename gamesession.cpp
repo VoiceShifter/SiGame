@@ -272,6 +272,11 @@ bool GameSession::hasActiveQuestion() const
       return currentQuestion() != nullptr && m_questionSequence != 0;
 }
 
+void GameSession::setReactionDecisionWindowMs(unsigned int durationMs)
+{
+      m_reactionDecisionWindowMs = std::max(50U, durationMs);
+}
+
 void GameSession::publishSnapshot()
 {
       emit snapshotReady(snapshot());
@@ -514,7 +519,7 @@ void GameSession::submitReaction(PlayerId playerId, quint64 questionSequence,
                    QStringLiteral("This player cannot react to the question"));
             return;
       }
-      if (elapsedMs > m_config.answerWaitDurationMs)
+      if (elapsedMs > m_phaseDuration)
       {
             reject(playerId, QStringLiteral("STALE_SEQUENCE"),
                    QStringLiteral("The reaction duration is too large"));
@@ -530,6 +535,7 @@ void GameSession::submitReaction(PlayerId playerId, quint64 questionSequence,
       {
             return;
       }
+      const bool firstClaim = m_reactionClaims.isEmpty();
       m_reactionClaims.insert(playerId,
                               {elapsedMs, comparisonElapsedMs, actionId});
       const bool allEligiblePlayersClaimed = std::all_of(
@@ -542,6 +548,13 @@ void GameSession::submitReaction(PlayerId playerId, quint64 questionSequence,
       if (allEligiblePlayersClaimed)
       {
             decideReactionWinner();
+            return;
+      }
+      if (firstClaim)
+      {
+            const qint64 decisionDeadline =
+                  m_clock.elapsed() + m_reactionDecisionWindowMs;
+            m_deadlineMs = std::min(m_deadlineMs, decisionDeadline);
       }
 }
 
@@ -819,6 +832,15 @@ void GameSession::requestAppeal(PlayerId playerId, quint64 questionSequence,
       appeal.questionSequence = m_questionSequence;
       appeal.appellant = playerId;
       appeal.submitted = m_submittedAnswers.value(playerId);
+      if (const Question *question = currentQuestion())
+      {
+            for (const QString &answer : question->rightAnswers)
+            {
+                  appeal.rightAnswers.push_back(answer);
+            }
+            appeal.answerMediaType = question->answerMediaType;
+            appeal.answerMediaPath = question->answerMediaPath;
+      }
       appeal.durationMs = m_config.appealDurationMs;
       for (const PlayerState &candidate : m_players)
       {
@@ -1166,8 +1188,8 @@ void GameSession::beginReaction()
             return;
       }
       m_reactionClaims.clear();
+      m_remainingReactionMs = m_config.answerWaitDurationMs;
       startPhase(SessionPhase::WaitingForReaction, m_config.answerWaitDurationMs);
-      m_reactionDeadlineMs = m_deadlineMs;
       emit reactionOpened({m_questionSequence, m_phaseSequence,
                            m_config.answerWaitDurationMs,
                            m_config.answerWaitDurationMs});
@@ -1202,6 +1224,10 @@ void GameSession::decideReactionWinner()
             revealAnswer();
             return;
       }
+      m_remainingReactionMs =
+            selected.measuredMs >= m_phaseDuration
+                  ? 0U
+                  : m_phaseDuration - selected.measuredMs;
       m_answerOwner = winner;
       emit reactionWinner(winner, selected.scoreMs);
       startPhase(SessionPhase::Answering, questionAnswerDuration(), winner);
@@ -1363,11 +1389,7 @@ void GameSession::applyNormalAnswer(const PlayerId &playerId,
       result.amount = correct ? amount : -amount;
       result.answerKind = question->answerType;
       result.submitted = submitted;
-      result.remainingReactionMs =
-            m_reactionDeadlineMs > 0
-                  ? static_cast<unsigned int>(std::max<qint64>(
-                          0, m_reactionDeadlineMs - m_clock.elapsed()))
-                  : 0U;
+      result.remainingReactionMs = m_remainingReactionMs;
 
       if (correct)
       {
@@ -1401,6 +1423,7 @@ void GameSession::applyNormalAnswer(const PlayerId &playerId,
       emit answerOwnerChanged({}, 0);
       if (result.retryAllowed)
       {
+            m_reactionClaims.clear();
             startPhase(SessionPhase::WaitingForReaction, remaining);
             emit reactionResumed(remaining, playerId);
       }
@@ -1455,6 +1478,7 @@ void GameSession::beginNextQuestion()
       m_lastReveal.reset();
       m_questionStates.clear();
       m_wrongAmounts.clear();
+      m_remainingReactionMs = 0;
       m_answerDrafts.clear();
       m_submittedAnswers.clear();
       m_correctForCurrentQuestion.clear();
@@ -1519,6 +1543,7 @@ void GameSession::resetQuestionState()
 {
       m_questionStates.clear();
       m_wrongAmounts.clear();
+      m_remainingReactionMs = 0;
       m_answerDrafts.clear();
       m_submittedAnswers.clear();
       m_correctForCurrentQuestion.clear();

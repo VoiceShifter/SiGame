@@ -1564,6 +1564,19 @@ void MultiplayerHost::sendSnapshot(Peer &peer)
             }
             sendFrame(peer, QStringLiteral("APPEAL_OPEN"), appealFields);
       }
+      if (m_session->secretInformationRevealed())
+      {
+            const SecretWagerParameters parameters =
+                  m_session->secretWagerParameters();
+            sendFrame(
+                  peer, QStringLiteral("SECRET_INFO"),
+                  {{QStringLiteral("questionSeq"),
+                    stringValue(m_session->questionSequence())},
+                   {QStringLiteral("minimum"), stringValue(parameters.minimum)},
+                   {QStringLiteral("maximum"), stringValue(parameters.maximum)},
+                   {QStringLiteral("step"), stringValue(parameters.step)},
+                   {QStringLiteral("secretTheme"), parameters.theme}});
+      }
       if (m_session->phase() == SessionPhase::SecretTargetSelection &&
           peer.playerId == m_session->currentPicker())
       {
@@ -1924,6 +1937,21 @@ void MultiplayerHost::connectSessionSignals()
                     emit rosterChanged(players);
                     sendRoster();
               });
+      connect(
+            m_session, &GameSession::secretInformationReady, this,
+            [this](const SecretWagerParameters &parameters)
+            {
+                  sendSessionEvent(
+                        QStringLiteral("SECRET_INFO"),
+                        {{QStringLiteral("questionSeq"),
+                          stringValue(m_session->questionSequence())},
+                         {QStringLiteral("minimum"),
+                          stringValue(parameters.minimum)},
+                         {QStringLiteral("maximum"),
+                          stringValue(parameters.maximum)},
+                         {QStringLiteral("step"), stringValue(parameters.step)},
+                         {QStringLiteral("secretTheme"), parameters.theme}});
+            });
       connect(
             m_session, &GameSession::secretTargetsReady, this,
             [this](quint64 questionSequence,

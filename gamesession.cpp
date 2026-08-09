@@ -302,6 +302,42 @@ SecretWagerParameters GameSession::secretWagerParameters() const
       return parameters;
 }
 
+void GameSession::beginSecretTargetSelection(const PlayerId &picker)
+{
+      QVector<PlayerState> targets;
+      const QString selectionMode = secretSelectionMode();
+      for (const PlayerState &state : m_players)
+      {
+            if (!isConnected(state.id) ||
+                (selectionMode.compare(QStringLiteral("exceptCurrent"),
+                                       Qt::CaseInsensitive) == 0 &&
+                 state.id == picker))
+            {
+                  continue;
+            }
+            targets.push_back(state);
+      }
+      startPhase(SessionPhase::SecretTargetSelection,
+                 m_config.questionPickDurationMs, picker);
+      emit secretTargetsReady(m_questionSequence, targets);
+}
+
+void GameSession::revealSecretInformation()
+{
+      if (m_secretInformationRevealed)
+      {
+            return;
+      }
+      m_secretInformationRevealed = true;
+      emit secretInformationReady(secretWagerParameters());
+}
+
+void GameSession::beginSecretWager(const PlayerId &target)
+{
+      startPhase(SessionPhase::SecretWager, questionAnswerDuration(), target);
+      emit secretWagerPrompt(target, secretWagerParameters());
+}
+
 SecretWagerParameters GameSession::finalWagerParameters(
       const PlayerId &playerId) const
 {
@@ -397,6 +433,7 @@ bool GameSession::skipToRound(int roundIndex)
       m_secretTarget.clear();
       m_nextPicker.clear();
       m_secretWager = 0;
+      m_secretInformationRevealed = false;
       m_finalQuestionActive = false;
       m_presentation.reset();
       m_lastReveal.reset();
@@ -468,6 +505,7 @@ void GameSession::selectQuestion(PlayerId playerId, int round, int theme,
       m_secretTarget.clear();
       m_nextPicker.clear();
       m_secretWager = 0;
+      m_secretInformationRevealed = false;
       m_presentation.reset();
       m_lastReveal.reset();
       resetQuestionState();
@@ -480,27 +518,14 @@ void GameSession::selectQuestion(PlayerId playerId, int round, int theme,
                    QStringLiteral("The selected question is unavailable"));
             return;
       }
-      if (selected->type == QuestionType::SecretPublicPrice)
+      if (isSecretQuestionType(selected->type))
       {
             m_presentation.reset();
-            QVector<PlayerState> targets;
-            const QString selectionMode = selected->secretParameters.has_value()
-                                                ? selected->secretParameters->selectionMode
-                                                : QString();
-            for (const PlayerState &state : m_players)
+            if (selected->type == QuestionType::SecretPublicPrice)
             {
-                  if (!isConnected(state.id) ||
-                      (selectionMode.compare(QStringLiteral("exceptCurrent"),
-                                             Qt::CaseInsensitive) == 0 &&
-                       state.id == playerId))
-                  {
-                        continue;
-                  }
-                  targets.push_back(state);
+                  revealSecretInformation();
             }
-            startPhase(SessionPhase::SecretTargetSelection,
-                       m_config.questionPickDurationMs, playerId);
-            emit secretTargetsReady(m_questionSequence, targets);
+            beginSecretTargetSelection(playerId);
             return;
       }
 
@@ -552,16 +577,11 @@ void GameSession::selectSecretTarget(PlayerId picker, PlayerId target,
             return;
       }
       m_secretTarget = target;
-      SecretWagerParameters parameters;
-      if (question->secretParameters.has_value())
+      if (question->type == QuestionType::Secret)
       {
-            parameters.minimum = question->secretParameters->price.minimum;
-            parameters.maximum = question->secretParameters->price.maximum;
-            parameters.step = question->secretParameters->price.step;
-            parameters.theme = question->secretParameters->theme;
+            revealSecretInformation();
       }
-      startPhase(SessionPhase::SecretWager, questionAnswerDuration(), target);
-      emit secretWagerPrompt(target, parameters);
+      beginSecretWager(target);
 }
 
 void GameSession::submitSecretWager(PlayerId target, int amount,
@@ -1256,7 +1276,7 @@ void GameSession::handleTimeout()
                   beginForAllAnswering();
             }
             else if (currentQuestion() != nullptr &&
-                     currentQuestion()->type == QuestionType::SecretPublicPrice)
+                     isSecretQuestionType(currentQuestion()->type))
             {
                   m_answerOwner = m_secretTarget;
                   startPhase(SessionPhase::Answering, questionAnswerDuration(),
@@ -1466,6 +1486,8 @@ void GameSession::beginFinalWagering(int theme, int question)
       m_answerOwner.clear();
       m_secretTarget.clear();
       m_nextPicker.clear();
+      m_secretWager = 0;
+      m_secretInformationRevealed = false;
       m_presentation.reset();
       m_lastReveal.reset();
       m_finalQuestionActive = true;
@@ -1741,7 +1763,7 @@ void GameSession::applyNormalAnswer(const PlayerId &playerId,
       {
             return;
       }
-      const int amount = question->type == QuestionType::SecretPublicPrice
+      const int amount = isSecretQuestionType(question->type)
                                ? m_secretWager
                                : question->price;
       const QString submitted = timedOut ? QString() : answerText(submission);
@@ -1786,7 +1808,7 @@ void GameSession::applyNormalAnswer(const PlayerId &playerId,
       m_questionStates[playerId].effectiveAmount = amount;
       m_wrongAmounts.insert(playerId, -amount);
       result.balance = state->balance;
-      const bool secret = question->type == QuestionType::SecretPublicPrice;
+      const bool secret = isSecretQuestionType(question->type);
       const unsigned int remaining = result.remainingReactionMs;
       result.retryAllowed = !secret && remaining > 0 && hasRemainingEligiblePlayers();
       emit answerResult(result);
@@ -1854,6 +1876,9 @@ void GameSession::beginNextQuestion()
       }
       m_nextPicker.clear();
       m_answerOwner.clear();
+      m_secretTarget.clear();
+      m_secretWager = 0;
+      m_secretInformationRevealed = false;
       m_presentation.reset();
       m_lastReveal.reset();
       m_questionStates.clear();
@@ -2125,7 +2150,7 @@ QuestionPresentation GameSession::makePresentation() const
       presentation.mediaDurationMs =
             clampDuration(question->mediaDuration * 1000ULL);
       presentation.answerDurationMs = questionAnswerDuration();
-      presentation.answerOwner = question->type == QuestionType::SecretPublicPrice
+      presentation.answerOwner = isSecretQuestionType(question->type)
                                        ? m_secretTarget
                                        : QString();
       for (const AnswerOption &option : question->answerOptions)

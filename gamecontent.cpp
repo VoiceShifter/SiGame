@@ -132,6 +132,11 @@ void setQuestionType(Question &question, const QString &value)
             question.type = QuestionType::ForAll;
             setQuestionFlag(question, QuestionFlag::ForAll);
       }
+      else if (value == QStringLiteral("secret"))
+      {
+            question.type = QuestionType::Secret;
+            question.secretParameters.emplace();
+      }
       else if (value == QStringLiteral("secretPublicPrice"))
       {
             question.type = QuestionType::SecretPublicPrice;
@@ -167,17 +172,47 @@ void parseItemAttributes(Question &question,
       }
 }
 
-QString resolveMediaReference(const Game &game, const QString &media)
+QString mediaPathForType(const QString &media, MediaType mediaType)
 {
+      QString path = media;
+      path.replace(QLatin1Char('\\'), QLatin1Char('/'));
+      if (path.contains(QLatin1Char('/')))
+      {
+            return path;
+      }
+
+      switch (mediaType)
+      {
+      case MediaType::Image:
+            return QStringLiteral("Images/%1").arg(path);
+      case MediaType::Audio:
+            return QStringLiteral("Audio/%1").arg(path);
+      case MediaType::Video:
+            return QStringLiteral("Video/%1").arg(path);
+      case MediaType::None:
+            return path;
+      }
+      return path;
+}
+
+QString resolveMediaReference(const Game &game, const QString &media,
+                              MediaType mediaType)
+{
+      QString normalizedMedia = media;
+      normalizedMedia.replace(QLatin1Char('\\'), QLatin1Char('/'));
       for (const auto &indexedMedia : game.mediaFiles)
       {
-            if (indexedMedia == media ||
-                indexedMedia.endsWith(QStringLiteral("/") + media))
+            QString normalizedIndexedMedia = indexedMedia;
+            normalizedIndexedMedia.replace(QLatin1Char('\\'),
+                                           QLatin1Char('/'));
+            if (normalizedIndexedMedia == normalizedMedia ||
+                normalizedIndexedMedia.endsWith(QStringLiteral("/") +
+                                                normalizedMedia))
             {
-                  return indexedMedia;
+                  return mediaPathForType(normalizedIndexedMedia, mediaType);
             }
       }
-      return media;
+      return mediaPathForType(normalizedMedia, mediaType);
 }
 
 void storeMedia(Question &question, const QString &paramName,
@@ -253,6 +288,8 @@ QString questionTypeName(QuestionType questionType)
             return QStringLiteral("Default");
       case QuestionType::ForAll:
             return QStringLiteral("ForAll");
+      case QuestionType::Secret:
+            return QStringLiteral("Secret");
       case QuestionType::SecretPublicPrice:
             return QStringLiteral("SecretPublicPrice");
       case QuestionType::Unknown:
@@ -665,8 +702,6 @@ bool parseGameContent(const QString &contentXmlPath, Game *game,
                         const MediaType mediaType =
                               mediaTypeFromString(attributeValue(
                                     attributes, QStringLiteral("type")));
-                        const bool isReference = parseBoolean(attributeValue(
-                              attributes, QStringLiteral("isRef")));
                         const std::size_t duration = parseDuration(
                               attributeValue(attributes,
                                              QStringLiteral("duration")));
@@ -674,10 +709,8 @@ bool parseGameContent(const QString &contentXmlPath, Game *game,
                               xml.readElementText(
                                        QXmlStreamReader::IncludeChildElements)
                                     .trimmed();
-                        const QString media =
-                              isReference ? resolveMediaReference(parsedGame,
-                                                                  itemText)
-                                          : itemText;
+                        const QString media = resolveMediaReference(
+                              parsedGame, itemText, mediaType);
 
                         storeMedia(*currentQuestion, paramName, mediaType,
                                    media, duration);

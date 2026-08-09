@@ -44,9 +44,16 @@ enum class QuestionType
 {
       Default,
       ForAll,
+      Secret,
       SecretPublicPrice,
       Unknown
 };
+
+inline bool isSecretQuestionType(QuestionType type)
+{
+      return type == QuestionType::Secret ||
+             type == QuestionType::SecretPublicPrice;
+}
 
 struct AnswerOption
 {

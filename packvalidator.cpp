@@ -11,7 +11,6 @@
 #include <QTextStream>
 #include <QXmlStreamReader>
 
-#include <algorithm>
 #include <cmath>
 
 namespace
@@ -123,19 +122,6 @@ QString questionLocation(int roundIndex, int themeIndex, int questionIndex)
             .arg(questionIndex + 1);
 }
 
-QString resolvedMediaPath(const Game &game, const QString &reference)
-{
-      for (const QString &mediaFile : game.mediaFiles)
-      {
-            if (mediaFile == reference ||
-                mediaFile.endsWith(QStringLiteral("/") + reference))
-            {
-                  return mediaFile;
-            }
-      }
-      return reference;
-}
-
 void addError(PackValidationResult &result, const QString &message)
 {
       result.errors.push_back(message);
@@ -160,8 +146,38 @@ void validateFile(const QDir &pack, const QString &relativePath,
       }
 }
 
-void validateXmlItems(const QString &contentPath, const QDir &pack,
-                      const Game &game, PackValidationResult &result)
+void validateDeclaredMedia(const QDir &pack, const QString &media,
+                           PackValidationResult &result)
+{
+      QString normalized = media;
+      normalized.replace(QLatin1Char('\\'), QLatin1Char('/'));
+      if (normalized.contains(QLatin1Char('/')))
+      {
+            validateFile(pack, normalized, QObject::tr("Media index"), result);
+            return;
+      }
+
+      const QStringList directories = {QStringLiteral("Audio"),
+                                       QStringLiteral("Images"),
+                                       QStringLiteral("Video")};
+      for (const QString &directory : directories)
+      {
+            const QString relativePath =
+                  QStringLiteral("%1/%2").arg(directory, normalized);
+            const QFileInfo file(pack.filePath(relativePath));
+            if (file.isFile() && !file.isSymLink())
+            {
+                  return;
+            }
+      }
+      addError(result,
+               QObject::tr("Media index is missing file in Audio, Images, or "
+                           "Video: %1")
+                     .arg(normalized));
+}
+
+void validateXmlItems(const QString &contentPath,
+                      PackValidationResult &result)
 {
       QFile file(contentPath);
       if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
@@ -259,59 +275,14 @@ void validateXmlItems(const QString &contentPath, const QDir &pack,
                               xml.readElementText(
                                        QXmlStreamReader::IncludeChildElements)
                                     .trimmed();
-                        if (type == QStringLiteral("image") ||
-                            type == QStringLiteral("audio") ||
-                            type == QStringLiteral("video"))
+                        if ((type == QStringLiteral("image") ||
+                             type == QStringLiteral("audio") ||
+                             type == QStringLiteral("video")) &&
+                            itemText.isEmpty())
                         {
-                              if (itemText.isEmpty())
-                              {
-                                    addError(result,
-                                             QObject::tr("%1 has an empty media "
-                                                         "path.")
-                                                   .arg(location));
-                              }
-                              else
-                              {
-                                    const bool isReference =
-                                          attributeValue(
-                                                attributes,
-                                                QStringLiteral("isRef"))
-                                                .trimmed()
-                                                .compare(QStringLiteral("true"),
-                                                         Qt::CaseInsensitive) ==
-                                                0 ||
-                                          attributeValue(
-                                                attributes,
-                                                QStringLiteral("isRef")) ==
-                                                QStringLiteral("1") ||
-                                          attributeValue(
-                                                attributes,
-                                                QStringLiteral("isRef"))
-                                                .trimmed()
-                                                .compare(QStringLiteral("yes"),
-                                                         Qt::CaseInsensitive) ==
-                                                0;
-                                    const QString mediaPath =
-                                          isReference
-                                                ? resolvedMediaPath(game,
-                                                                    itemText)
-                                                : itemText;
-                                    if (isReference &&
-                                        std::find(game.mediaFiles.begin(),
-                                                  game.mediaFiles.end(),
-                                                  mediaPath) ==
-                                              game.mediaFiles.end())
-                                    {
-                                          addError(
-                                                result,
-                                                QObject::tr("%1 references media "
-                                                            "not declared in "
-                                                            "content.xml: %2")
-                                                      .arg(location, itemText));
-                                    }
-                                    validateFile(pack, mediaPath, location,
-                                                 result);
-                              }
+                              addError(result,
+                                       QObject::tr("%1 has an empty media path.")
+                                             .arg(location));
                         }
                   }
             }
@@ -396,7 +367,7 @@ PackValidationResult PackValidator::validate(const QString &packPath)
                                  .arg(mediaFile));
             }
             declaredMedia.insert(mediaFile);
-            validateFile(pack, mediaFile, QObject::tr("Media index"), result);
+            validateDeclaredMedia(pack, mediaFile, result);
       }
 
       for (std::size_t roundIndex = 0; roundIndex < game.rounds.size();
@@ -472,6 +443,22 @@ PackValidationResult PackValidator::validate(const QString &packPath)
                                        QObject::tr("%1 has no question text or "
                                                    "media.")
                                              .arg(location));
+                        }
+                        if (question.mediaType != MediaType::None)
+                        {
+                              validateFile(
+                                    pack, question.mediaPath,
+                                    QObject::tr("%1 question media")
+                                          .arg(location),
+                                    result);
+                        }
+                        if (question.answerMediaType != MediaType::None)
+                        {
+                              validateFile(
+                                    pack, question.answerMediaPath,
+                                    QObject::tr("%1 answer media")
+                                          .arg(location),
+                                    result);
                         }
                         if (question.rightAnswers.empty())
                         {
@@ -563,8 +550,7 @@ PackValidationResult PackValidator::validate(const QString &packPath)
                               }
                         }
 
-                        if (question.type ==
-                            QuestionType::SecretPublicPrice)
+                        if (isSecretQuestionType(question.type))
                         {
                               if (!question.secretParameters.has_value())
                               {
@@ -605,7 +591,7 @@ PackValidationResult PackValidator::validate(const QString &packPath)
             }
       }
 
-      validateXmlItems(contentPath, pack, game, result);
+      validateXmlItems(contentPath, result);
       result.logLines.push_back(
             QObject::tr("Checked %1 rounds, %2 themes, and %3 questions.")
                   .arg(result.roundCount)

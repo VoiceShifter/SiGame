@@ -386,6 +386,9 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                   playerPixmap.scaled(200, 200, Qt::KeepAspectRatio,
                                       Qt::SmoothTransformation));
             playerPfp->setScaledContents(1);
+            playerPfp->setProperty("singleSecretTargetIndex",
+                                   static_cast<int>(Index));
+            playerPfp->installEventFilter(this);
             applyPlayerGlow(playerPfp, PlayerGlow::None);
             const QString playerDisplayName =
                   Index == 0 && !Nickname.isEmpty()
@@ -1036,9 +1039,21 @@ bool GameScreen::eventFilter(QObject *watched, QEvent *event)
       }
       if (event->type() == QEvent::MouseButtonPress)
       {
+            const auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            bool singleTargetValid = false;
+            const int singleTarget =
+                  watched->property("singleSecretTargetIndex")
+                        .toInt(&singleTargetValid);
+            if (m_mode == GameScreenMode::SinglePlayer &&
+                m_phase == GamePhase::SecretTargetSelection &&
+                mouseEvent->button() == Qt::LeftButton && singleTargetValid)
+            {
+                  selectSingleSecretTarget(singleTarget);
+                  return true;
+            }
+
             const PlayerId targetId =
                   watched->property("secretTargetId").toString();
-            const auto *mouseEvent = static_cast<QMouseEvent *>(event);
             const auto target = std::find_if(
                   m_networkPlayers.cbegin(), m_networkPlayers.cend(),
                   [&targetId](const PlayerState &state)
@@ -1090,8 +1105,8 @@ bool GameScreen::eventFilter(QObject *watched, QEvent *event)
                         submission.mode = m_forAllAnswering
                                                 ? QStringLiteral("ForAll")
                                                 : (m_networkQuestion.has_value() &&
-                                                           m_networkQuestion->type ==
-                                                                 QuestionType::SecretPublicPrice
+                                                           isSecretQuestionType(
+                                                                 m_networkQuestion->type)
                                                          ? QStringLiteral("Secret")
                                                          : QString());
                         m_networkAnswerSubmitted = true;
@@ -1249,6 +1264,16 @@ void GameScreen::handlePhaseTimeout()
             {
                   beginSingleFinalAnswers();
             }
+            else if (isSecretQuestionType(currentQuestion().type))
+            {
+                  const unsigned int duration =
+                        currentQuestion().answerDuration > 0
+                              ? mediaDurationMilliseconds(
+                                      currentQuestion().answerDuration)
+                              : m_answerDuration;
+                  startPhaseTimer(GamePhase::Answering, duration);
+                  openAnswerInput();
+            }
             else
             {
                   startReactionFlash();
@@ -1284,12 +1309,24 @@ void GameScreen::handlePhaseTimeout()
                   finishSingleFinalAnswer(correct);
             }
             break;
+      case GamePhase::SecretTargetSelection:
+            if (!m_players.empty())
+            {
+                  selectSingleSecretTarget(QRandomGenerator::global()->bounded(
+                        static_cast<int>(m_players.size())));
+            }
+            break;
+      case GamePhase::SecretWager:
+            if (currentQuestion().secretParameters.has_value())
+            {
+                  submitSingleSecretWager(
+                        currentQuestion().secretParameters->price.minimum);
+            }
+            break;
       case GamePhase::FinalWager:
             submitSingleFinalWager(0);
             break;
       case GamePhase::Lobby:
-      case GamePhase::SecretTargetSelection:
-      case GamePhase::SecretWager:
       case GamePhase::AppealVoting:
       case GamePhase::Finished:
             break;
@@ -1449,6 +1486,13 @@ void GameScreen::showQuestion(int themeIndex, int questionIndex)
             emit forAllQuestionSelected(m_boardRoundIndex, themeIndex,
                                         questionIndex);
             break;
+      case QuestionType::Secret:
+            if (m_mode == GameScreenMode::SinglePlayer)
+            {
+                  beginSingleSecretQuestion();
+                  return;
+            }
+            break;
       case QuestionType::SecretPublicPrice:
             if (question.secretParameters.has_value())
             {
@@ -1467,6 +1511,11 @@ void GameScreen::showQuestion(int themeIndex, int questionIndex)
                         m_boardRoundIndex, themeIndex, questionIndex, QString(),
                         0, 0, 0, QString());
             }
+            if (m_mode == GameScreenMode::SinglePlayer)
+            {
+                  beginSingleSecretQuestion();
+                  return;
+            }
             break;
       case QuestionType::Default:
             break;
@@ -1475,6 +1524,116 @@ void GameScreen::showQuestion(int themeIndex, int questionIndex)
             break;
       }
 
+      showSelectedQuestion();
+}
+
+void GameScreen::beginSingleSecretQuestion()
+{
+      m_singleSecretTargetIndex = -1;
+      m_singleSecretWager = 0;
+      m_secretInformationText.clear();
+      resetAnswerInputState();
+      if (m_players.empty())
+      {
+            returnToBoard();
+            return;
+      }
+
+      const Question &question = currentQuestion();
+      if (question.type == QuestionType::SecretPublicPrice &&
+          question.secretParameters.has_value())
+      {
+            const SecretQuestionParameters &secret =
+                  *question.secretParameters;
+            applySecretInformation({secret.price.minimum, secret.price.maximum,
+                                    secret.price.step, secret.theme});
+      }
+      m_boardStatusLabel->setText(
+            m_secretInformationText.isEmpty()
+                  ? tr("Choose an answerer")
+                  : tr("%1\nChoose an answerer")
+                          .arg(m_secretInformationText));
+      ui->gameContentStack->setCurrentWidget(ui->boardPage);
+      for (Player &player : m_players)
+      {
+            player.avatarLabel->setCursor(Qt::PointingHandCursor);
+      }
+      startPhaseTimer(GamePhase::SecretTargetSelection,
+                      m_questionPickDuration);
+}
+
+void GameScreen::selectSingleSecretTarget(int playerIndex)
+{
+      if (m_phase != GamePhase::SecretTargetSelection || playerIndex < 0 ||
+          playerIndex >= static_cast<int>(m_players.size()))
+      {
+            return;
+      }
+      m_singleSecretTargetIndex = playerIndex;
+      for (Player &player : m_players)
+      {
+            player.avatarLabel->setCursor(Qt::ArrowCursor);
+      }
+
+      const Question &question = currentQuestion();
+      SecretWagerParameters parameters;
+      if (question.secretParameters.has_value())
+      {
+            const SecretQuestionParameters &secret =
+                  *question.secretParameters;
+            parameters = {secret.price.minimum, secret.price.maximum,
+                          secret.price.step, secret.theme};
+      }
+      if (question.type == QuestionType::Secret)
+      {
+            applySecretInformation(parameters);
+      }
+
+      const unsigned int duration =
+            question.answerDuration > 0
+                  ? mediaDurationMilliseconds(question.answerDuration)
+                  : m_answerDuration;
+      startPhaseTimer(GamePhase::SecretWager, duration);
+      m_answerDialog = new QInputDialog(this);
+      QInputDialog *dialog = m_answerDialog.data();
+      dialog->setAttribute(Qt::WA_DeleteOnClose);
+      dialog->setInputMode(QInputDialog::IntInput);
+      dialog->setWindowTitle(tr("Secret wager"));
+      dialog->setLabelText(
+            tr("%1, choose the price:\n%2")
+                  .arg(m_players[static_cast<std::size_t>(playerIndex)].name,
+                       m_secretInformationText));
+      dialog->setIntRange(parameters.minimum, parameters.maximum);
+      dialog->setIntStep(parameters.step > 0 ? parameters.step : 1);
+      dialog->setIntValue(parameters.minimum);
+      connect(dialog, &QInputDialog::intValueSelected, this,
+              &GameScreen::submitSingleSecretWager);
+      connect(dialog, &QDialog::rejected, this,
+              [this, minimum = parameters.minimum]()
+              { submitSingleSecretWager(minimum); });
+      dialog->open();
+}
+
+void GameScreen::submitSingleSecretWager(int amount)
+{
+      if (m_phase != GamePhase::SecretWager)
+      {
+            return;
+      }
+      m_singleSecretWager = amount;
+      if (m_answerDialog != nullptr)
+      {
+            QInputDialog *dialog = m_answerDialog.data();
+            m_answerDialog = nullptr;
+            disconnect(dialog, nullptr, this, nullptr);
+            dialog->close();
+      }
+      showSelectedQuestion();
+}
+
+void GameScreen::showSelectedQuestion()
+{
+      const Question &question = currentQuestion();
       resetAnswerInputState();
       const unsigned int mediaDuration =
             mediaDurationMilliseconds(question.mediaDuration);
@@ -1519,7 +1678,8 @@ void GameScreen::showQuestion(int themeIndex, int questionIndex)
             player.hasPassed = false;
       }
       ui->AnswerBytton->setEnabled(false);
-      ui->passButton->setEnabled(!m_players.empty());
+      ui->passButton->setEnabled(!m_players.empty() &&
+                                 !isSecretQuestionType(question.type));
       ui->gameContentStack->setCurrentWidget(ui->questionPage);
       QTimer::singleShot(0, this, &GameScreen::fitDisplayedPixmap);
       startPhaseTimer(GamePhase::ReadingQuestion,
@@ -1632,6 +1792,13 @@ void GameScreen::returnToBoard()
       m_displayedPixmap = {};
       m_currentThemeIndex = -1;
       m_currentQuestionIndex = -1;
+      m_singleSecretTargetIndex = -1;
+      m_singleSecretWager = 0;
+      m_secretInformationText.clear();
+      for (Player &player : m_players)
+      {
+            player.avatarLabel->setCursor(Qt::ArrowCursor);
+      }
       ui->gameContentStack->setCurrentWidget(ui->boardPage);
       if (m_mode == GameScreenMode::SinglePlayer &&
           !hasAvailableQuestions())
@@ -2414,8 +2581,8 @@ void GameScreen::handleSubmittedAnswer(const QString &answer)
             submission.answerType = currentQuestion().answerType;
             submission.mode = m_forAllAnswering
                                     ? QStringLiteral("ForAll")
-                                    : (currentQuestion().type ==
-                                             QuestionType::SecretPublicPrice
+                                    : (isSecretQuestionType(
+                                             currentQuestion().type)
                                            ? QStringLiteral("Secret")
                                            : QString());
             if (submission.answerType == AnswerType::Select)
@@ -2486,8 +2653,8 @@ void GameScreen::handleAnswerDeclined()
                   submission.answerType = currentQuestion().answerType;
                   submission.mode = m_forAllAnswering
                                           ? QStringLiteral("ForAll")
-                                          : (currentQuestion().type ==
-                                                   QuestionType::SecretPublicPrice
+                                          : (isSecretQuestionType(
+                                                   currentQuestion().type)
                                                  ? QStringLiteral("Secret")
                                                  : QString());
                   m_networkAnswerSubmitted = true;
@@ -2516,7 +2683,17 @@ void GameScreen::applyAnswerResult(bool isCorrect,
 
       m_answerResultApplied = true;
       m_submittedAnswer = submittedAnswer;
-      Player &player = m_players.front();
+      const std::size_t playerIndex =
+            isSecretQuestionType(currentQuestion().type) &&
+                        m_singleSecretTargetIndex >= 0 &&
+                        m_singleSecretTargetIndex <
+                              static_cast<int>(m_players.size())
+                  ? static_cast<std::size_t>(m_singleSecretTargetIndex)
+                  : 0U;
+      Player &player = m_players[playerIndex];
+      const int amount = isSecretQuestionType(currentQuestion().type)
+                               ? m_singleSecretWager
+                               : currentQuestion().price;
       if (isCorrect)
       {
             ++player.correctAnswers;
@@ -2537,19 +2714,20 @@ void GameScreen::applyAnswerResult(bool isCorrect,
                           true);
       if (isCorrect)
       {
-            player.balance += currentQuestion().price;
+            player.balance += amount;
             updateBalanceLabel(player);
             m_answerDialog = nullptr;
             showAnswer();
             return;
       }
 
-      player.balance -= currentQuestion().price;
+      player.balance -= amount;
       updateBalanceLabel(player);
-      emit incorrectAnswerSubmitted(m_localPlayerId.isEmpty()
-                                          ? QStringLiteral("player-1")
-                                          : m_localPlayerId,
-                                    submittedAnswer);
+      emit incorrectAnswerSubmitted(
+            m_localPlayerId.isEmpty()
+                  ? QStringLiteral("player-%1").arg(playerIndex + 1)
+                  : m_localPlayerId,
+            submittedAnswer);
 }
 
 void GameScreen::applyAuthoritativeAnswerResult(const AnswerResult &result)
@@ -3033,6 +3211,7 @@ void GameScreen::applyPhase(const PhaseState &phase)
       }
       else if (phase.phase == SessionPhase::PickingQuestion)
       {
+            m_secretInformationText.clear();
             m_pickerId = phase.owner;
             if (isFinalRound(m_networkBoard.round))
             {
@@ -3047,6 +3226,23 @@ void GameScreen::applyPhase(const PhaseState &phase)
                   }
                   m_boardStatusLabel->setText(
                         tr("%1 eliminates a topic").arg(pickerName));
+            }
+            ui->gameContentStack->setCurrentWidget(ui->boardPage);
+      }
+      else if (phase.phase == SessionPhase::SecretTargetSelection)
+      {
+            m_boardStatusLabel->setText(
+                  m_secretInformationText.isEmpty()
+                        ? tr("Choose an answerer")
+                        : tr("%1\nChoose an answerer")
+                                .arg(m_secretInformationText));
+            ui->gameContentStack->setCurrentWidget(ui->boardPage);
+      }
+      else if (phase.phase == SessionPhase::SecretWager)
+      {
+            if (!m_secretInformationText.isEmpty())
+            {
+                  m_boardStatusLabel->setText(m_secretInformationText);
             }
             ui->gameContentStack->setCurrentWidget(ui->boardPage);
       }
@@ -3374,6 +3570,36 @@ void GameScreen::applySecretTargets(const QVector<PlayerState> &targets)
       setNetworkControls();
 }
 
+void GameScreen::applySecretInformation(
+      const SecretWagerParameters &parameters)
+{
+      const QString theme = parameters.theme.isEmpty()
+                                  ? tr("No special theme")
+                                  : parameters.theme;
+      QString price;
+      if (parameters.minimum == parameters.maximum)
+      {
+            price = QString::number(parameters.minimum);
+      }
+      else if (parameters.step > 0)
+      {
+            price = tr("%1 to %2, step %3")
+                          .arg(parameters.minimum)
+                          .arg(parameters.maximum)
+                          .arg(parameters.step);
+      }
+      else
+      {
+            price = tr("%1 to %2")
+                          .arg(parameters.minimum)
+                          .arg(parameters.maximum);
+      }
+      m_secretInformationText =
+            tr("Secret theme: %1\nPrice: %2").arg(theme, price);
+      m_boardStatusLabel->setText(m_secretInformationText);
+      ui->gameContentStack->setCurrentWidget(ui->boardPage);
+}
+
 void GameScreen::applyWagerPrompt(const SecretWagerParameters &parameters)
 {
       if (m_mode == GameScreenMode::SinglePlayer)
@@ -3659,7 +3885,15 @@ void GameScreen::setSinglePlayerGlow(PlayerGlow glow, bool clearAfterDelay)
       {
             return;
       }
-      Player &player = m_players.front();
+      const std::size_t playerIndex =
+            m_currentThemeIndex >= 0 && m_currentQuestionIndex >= 0 &&
+                        isSecretQuestionType(currentQuestion().type) &&
+                        m_singleSecretTargetIndex >= 0 &&
+                        m_singleSecretTargetIndex <
+                              static_cast<int>(m_players.size())
+                  ? static_cast<std::size_t>(m_singleSecretTargetIndex)
+                  : 0U;
+      Player &player = m_players[playerIndex];
       player.glow = glow;
       applyPlayerGlow(player.avatarLabel, glow);
       if (!clearAfterDelay)
@@ -3668,13 +3902,14 @@ void GameScreen::setSinglePlayerGlow(PlayerGlow glow, bool clearAfterDelay)
       }
       QTimer::singleShot(
             PlayerResultGlowDuration, this,
-            [this, glow]()
+            [this, glow, playerIndex]()
             {
                   if (m_mode == GameScreenMode::SinglePlayer &&
-                      !m_players.empty() && m_players.front().glow == glow)
+                      playerIndex < m_players.size() &&
+                      m_players[playerIndex].glow == glow)
                   {
-                        m_players.front().glow = PlayerGlow::None;
-                        applyPlayerGlow(m_players.front().avatarLabel,
+                        m_players[playerIndex].glow = PlayerGlow::None;
+                        applyPlayerGlow(m_players[playerIndex].avatarLabel,
                                         PlayerGlow::None);
                   }
             });
@@ -3899,6 +4134,8 @@ void GameScreen::connectHostSignals(MultiplayerHost *host)
       connect(session, &GameSession::secretTargetsReady, this,
               [this](quint64, const QVector<PlayerState> &targets)
               { applySecretTargets(targets); });
+      connect(session, &GameSession::secretInformationReady, this,
+              &GameScreen::applySecretInformation);
       connect(session, &GameSession::secretWagerPrompt, this,
               [this](const PlayerId &target,
                      const SecretWagerParameters &parameters)
@@ -3949,6 +4186,8 @@ void GameScreen::connectClientSignals(MultiplayerClient *client)
               &GameScreen::applyPause);
       connect(client, &MultiplayerClient::secretTargetListReceived, this,
               &GameScreen::applySecretTargets);
+      connect(client, &MultiplayerClient::secretInformationReceived, this,
+              &GameScreen::applySecretInformation);
       connect(client, &MultiplayerClient::secretWagerPromptReceived, this,
               &GameScreen::applyWagerPrompt);
       connect(client, &MultiplayerClient::snapshotApplied, this,

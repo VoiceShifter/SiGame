@@ -356,6 +356,8 @@ QString questionTypeName(int type)
             return QStringLiteral("Default");
       case QuestionType::ForAll:
             return QStringLiteral("ForAll");
+      case QuestionType::Secret:
+            return QStringLiteral("Secret");
       case QuestionType::SecretPublicPrice:
             return QStringLiteral("SecretPublicPrice");
       case QuestionType::Unknown:
@@ -401,6 +403,7 @@ bool isKnownCommand(const QString &command)
             QStringLiteral("FORALL_RESULT"),
             QStringLiteral("SECRET_TARGETS"),
             QStringLiteral("SECRET_TARGET"),
+            QStringLiteral("SECRET_INFO"),
             QStringLiteral("SECRET_WAGER_PROMPT"),
             QStringLiteral("SECRET_WAGER"),
             QStringLiteral("SECRET_READY"),

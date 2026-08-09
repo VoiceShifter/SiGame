@@ -88,6 +88,7 @@ class GameScreen : public QWidget
                       unsigned int remainingMs);
       void applySnapshot(const SessionSnapshot &snapshot);
       void applySecretTargets(const QVector<PlayerState> &targets);
+      void applySecretInformation(const SecretWagerParameters &parameters);
       void applyWagerPrompt(const SecretWagerParameters &parameters);
 
     signals:
@@ -150,6 +151,10 @@ class GameScreen : public QWidget
       void pauseSinglePlayer();
       void resumeSinglePlayer();
       void showAnswer();
+      void showSelectedQuestion();
+      void beginSingleSecretQuestion();
+      void selectSingleSecretTarget(int playerIndex);
+      void submitSingleSecretWager(int amount);
       void returnToBoard();
       void buildBoard(int roundIndex);
       void setupRoundIntroPage();
@@ -267,6 +272,8 @@ class GameScreen : public QWidget
       int m_singleFinalEliminatorIndex{};
       int m_singleFinalWagerPlayerIndex{};
       int m_singleFinalAnswerPlayerIndex{};
+      int m_singleSecretTargetIndex{-1};
+      int m_singleSecretWager{};
       unsigned int m_phaseDuration{};
       unsigned int m_singlePlayerRemainingMs{};
       bool m_answerResultApplied{};
@@ -313,6 +320,7 @@ class GameScreen : public QWidget
       bool m_canPass{};
       bool m_canAppeal{};
       bool m_secretTargetSelection{};
+      QString m_secretInformationText;
       bool m_forAllAnswering{};
       bool m_appealVoteSubmitted{};
       PlayerId m_appealAppellant;

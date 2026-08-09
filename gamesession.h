@@ -56,6 +56,10 @@ class GameSession : public QObject
       SessionSnapshot snapshot() const;
       std::optional<QuestionPresentation> currentPresentation() const;
       QString secretSelectionMode() const;
+      bool secretInformationRevealed() const
+      {
+            return m_secretInformationRevealed;
+      }
       bool hasActiveQuestion() const;
       bool skipToRound(int roundIndex);
       void setReactionDecisionWindowMs(unsigned int durationMs);
@@ -115,6 +119,7 @@ class GameSession : public QObject
       void snapshotReady(const SessionSnapshot &snapshot);
       void secretTargetsReady(quint64 questionSequence,
                               const QVector<PlayerState> &targets);
+      void secretInformationReady(const SecretWagerParameters &parameters);
       void secretWagerPrompt(PlayerId target,
                              const SecretWagerParameters &parameters);
       void secretReady(quint64 questionSequence, PlayerId target);
@@ -160,6 +165,9 @@ class GameSession : public QObject
       void beginFinalWagering(int theme, int question);
       void startFinalQuestion();
       void advanceRoundOrFinish();
+      void beginSecretTargetSelection(const PlayerId &picker);
+      void revealSecretInformation();
+      void beginSecretWager(const PlayerId &target);
       void beginReaction();
       void decideReactionWinner();
       void beginForAllAnswering();
@@ -247,6 +255,7 @@ class GameSession : public QObject
       int m_currentTheme{-1};
       int m_currentQuestion{-1};
       int m_secretWager{};
+      bool m_secretInformationRevealed{};
       bool m_finalQuestionActive{};
 };
 

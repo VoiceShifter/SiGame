@@ -165,6 +165,17 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID AND NOT IOS)
     target_link_libraries(packvalidator_tests PRIVATE
         Qt${QT_VERSION_MAJOR}::Test)
     add_test(NAME packvalidator_tests COMMAND packvalidator_tests)
+
+    add_executable(secretquestionflow_tests
+        tests/test_secretquestionflow.cpp
+        gamesession.h gamesession.cpp
+        gameconfig.h
+        gamecontent.h gamecontent.cpp
+        playerstate.h
+    )
+    target_link_libraries(secretquestionflow_tests PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test)
+    add_test(NAME secretquestionflow_tests COMMAND secretquestionflow_tests)
 endif()
 
 if(QT_VERSION_MAJOR EQUAL 6)

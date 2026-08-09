@@ -57,6 +57,7 @@ class MultiplayerClient : public QObject
       void boardReceived(const BoardState &state);
       void questionReceived(const QuestionPresentation &presentation);
       void secretTargetListReceived(const QVector<PlayerState> &targets);
+      void secretInformationReceived(const SecretWagerParameters &parameters);
       void secretWagerPromptReceived(const SecretWagerParameters &parameters);
       void reactionWinnerReceived(PlayerId playerId, unsigned int elapsedMs);
       void answerOwnerReceived(PlayerId playerId, unsigned int durationMs);

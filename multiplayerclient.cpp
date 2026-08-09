@@ -597,14 +597,22 @@ void MultiplayerClient::handleFrame(const MultiplayerProtocol::Frame &frame)
             emit secretTargetListReceived(targets);
             return;
       }
-      if (frame.command == QStringLiteral("SECRET_WAGER_PROMPT"))
+      if (frame.command == QStringLiteral("SECRET_INFO") ||
+          frame.command == QStringLiteral("SECRET_WAGER_PROMPT"))
       {
             SecretWagerParameters parameters;
             parameters.minimum = fields.value(QStringLiteral("minimum")).toInt();
             parameters.maximum = fields.value(QStringLiteral("maximum")).toInt();
             parameters.step = fields.value(QStringLiteral("step")).toInt();
             parameters.theme = fields.value(QStringLiteral("secretTheme"));
-            emit secretWagerPromptReceived(parameters);
+            if (frame.command == QStringLiteral("SECRET_INFO"))
+            {
+                  emit secretInformationReceived(parameters);
+            }
+            else
+            {
+                  emit secretWagerPromptReceived(parameters);
+            }
             return;
       }
       if (frame.command == QStringLiteral("ANSWER_REVEAL"))
@@ -927,6 +935,7 @@ bool MultiplayerClient::parseQuestionType(const QString &value,
       }
       const QStringList names = {QStringLiteral("Default"),
                                  QStringLiteral("ForAll"),
+                                 QStringLiteral("Secret"),
                                  QStringLiteral("SecretPublicPrice"),
                                  QStringLiteral("Unknown")};
       for (int index = 0; index < names.size(); ++index)

@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.16)
 
 project(SiGame VERSION 0.1 LANGUAGES CXX)
 
+include(CTest)
+
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
@@ -92,6 +94,8 @@ endif()
 target_sources(SiGame PRIVATE
     resources.qrc
     wasmpackimporter.h wasmpackimporter.cpp
+    packvalidator.h packvalidator.cpp
+    packvalidatorscreen.h packvalidatorscreen.cpp
 )
 if(EMSCRIPTEN)
     target_sources(SiGame PRIVATE wasm_resources.qrc)
@@ -150,6 +154,18 @@ install(TARGETS ${SIGAME_INSTALL_TARGETS}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+if(BUILD_TESTING AND NOT EMSCRIPTEN AND NOT ANDROID AND NOT IOS)
+    find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Test)
+    add_executable(packvalidator_tests
+        tests/test_packvalidator.cpp
+        packvalidator.h packvalidator.cpp
+        gamecontent.h gamecontent.cpp
+    )
+    target_link_libraries(packvalidator_tests PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test)
+    add_test(NAME packvalidator_tests COMMAND packvalidator_tests)
+endif()
 
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(SiGame)

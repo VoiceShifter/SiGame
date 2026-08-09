@@ -4,6 +4,7 @@
 #include "gamescreen.h"
 #include "multiplayerhostscreen.h"
 #include "multiplayerjoinscreen.h"
+#include "packvalidatorscreen.h"
 #include "singleplayerscreen.h"
 #include <QMainWindow>
 #include <QStackedWidget>
@@ -31,6 +32,7 @@ class MainWindow : public QMainWindow
       GameScreen *gameScreen{};
       MultiplayerHostScreen *hostScreen{};
       MultiplayerJoinScreen *joinScreen{};
+      PackValidatorScreen *validatorScreen{};
       QMessageBox *exitPopup;
 
     private slots:
@@ -43,6 +45,7 @@ class MainWindow : public QMainWindow
       void loadSettings();
       void loadMultiplayer();
       void loadJoinSettings();
+      void loadPackValidator();
       void loadHostGame(MultiplayerHost *host, const QString &packPath);
       void loadClientGame(MultiplayerClient *client, const QString &packPath);
       void returnToMainMenu();

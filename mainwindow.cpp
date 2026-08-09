@@ -55,7 +55,7 @@ MainWindow::MainWindow(QWidget *parent)
               {
                     const QWidget *current = stack->currentWidget();
                     if (current == singleScreen || current == hostScreen ||
-                        current == joinScreen)
+                        current == joinScreen || current == validatorScreen)
                     {
                           returnToMainMenu();
                     }
@@ -66,6 +66,8 @@ MainWindow::MainWindow(QWidget *parent)
               &MainWindow::loadSingleSettings);
       connect(ui->hostButton, &QPushButton::clicked, this,
               &MainWindow::loadMultiplayer);
+      connect(ui->validateButton, &QPushButton::clicked, this,
+              &MainWindow::loadPackValidator);
       connect(ui->exitButton, &QPushButton::clicked, this,
               &MainWindow::showExitPopup);
 }
@@ -124,6 +126,15 @@ void MainWindow::loadJoinSettings()
       connect(joinScreen, &MultiplayerJoinScreen::gameStarted, this,
               &MainWindow::loadClientGame);
       connect(joinScreen, &MultiplayerJoinScreen::cancelled, this,
+              &MainWindow::returnToMainMenu);
+}
+
+void MainWindow::loadPackValidator()
+{
+      validatorScreen = new PackValidatorScreen(this);
+      stack->addWidget(validatorScreen);
+      stack->setCurrentWidget(validatorScreen);
+      connect(validatorScreen, &PackValidatorScreen::cancelled, this,
               &MainWindow::returnToMainMenu);
 }
 
@@ -221,7 +232,8 @@ void MainWindow::returnToMainMenu()
                   joinScreen->client()->disconnectFromHost();
             }
       }
-      else if (settingsScreen != singleScreen)
+      else if (settingsScreen != singleScreen &&
+               settingsScreen != validatorScreen)
       {
             return;
       }
@@ -239,6 +251,10 @@ void MainWindow::returnToMainMenu()
       else if (settingsScreen == joinScreen)
       {
             joinScreen = nullptr;
+      }
+      else if (settingsScreen == validatorScreen)
+      {
+            validatorScreen = nullptr;
       }
       settingsScreen->deleteLater();
 }

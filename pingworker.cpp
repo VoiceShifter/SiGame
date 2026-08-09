@@ -2,6 +2,11 @@
 
 #include <algorithm>
 
+namespace
+{
+constexpr qint64 PlayerTimeoutMs = 10000;
+}
+
 PingWorker::PingWorker(QObject *parent) : QObject(parent) {}
 
 void PingWorker::start()
@@ -32,6 +37,17 @@ void PingWorker::stop()
 void PingWorker::setPlayers(const QVector<PlayerId> &players)
 {
       m_players = players;
+      for (auto iterator = m_samples.begin(); iterator != m_samples.end();)
+      {
+            if (!m_players.contains(iterator.key()))
+            {
+                  iterator = m_samples.erase(iterator);
+            }
+            else
+            {
+                  ++iterator;
+            }
+      }
       for (const PlayerId &player : m_players)
       {
             if (!m_samples.contains(player))
@@ -54,7 +70,7 @@ void PingWorker::pingCompleted(const PlayerId &playerId, quint64 pingId)
             return;
       }
       const double rtt = std::max<qint64>(0, m_clock.elapsed() - pending.value());
-      iterator->pending.erase(pending);
+      iterator->pending.clear();
       iterator->samples.push_back(rtt);
       while (iterator->samples.size() > 8)
       {
@@ -74,11 +90,21 @@ void PingWorker::requestPings()
       {
             m_clock.start();
       }
+      const qint64 now = m_clock.elapsed();
       for (const PlayerId &player : m_players)
       {
-            const quint64 pingId = m_nextPingId++;
             SampleState &state = m_samples[player];
-            state.pending.insert(pingId, m_clock.elapsed());
+            const auto oldest = std::min_element(
+                  state.pending.cbegin(), state.pending.cend());
+            if (oldest != state.pending.cend() &&
+                now - oldest.value() >= PlayerTimeoutMs)
+            {
+                  state.pending.clear();
+                  emit playerTimedOut(player);
+                  continue;
+            }
+            const quint64 pingId = m_nextPingId++;
+            state.pending.insert(pingId, now);
             emit pingRequested(player, pingId);
       }
 }

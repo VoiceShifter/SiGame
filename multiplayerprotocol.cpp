@@ -257,6 +257,8 @@ QString phaseName(SessionPhase phase)
       {
       case SessionPhase::Lobby:
             return QStringLiteral("Lobby");
+      case SessionPhase::RoundIntro:
+            return QStringLiteral("RoundIntro");
       case SessionPhase::PickingQuestion:
             return QStringLiteral("PickingQuestion");
       case SessionPhase::SecretTargetSelection:
@@ -291,6 +293,7 @@ bool phaseFromName(const QString &name, SessionPhase *phase)
       }
       const QList<SessionPhase> phases = {
             SessionPhase::Lobby,
+            SessionPhase::RoundIntro,
             SessionPhase::PickingQuestion,
             SessionPhase::SecretTargetSelection,
             SessionPhase::SecretWager,

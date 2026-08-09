@@ -138,12 +138,12 @@ class MultiplayerHost : public QObject
       void sendRoster();
       void sendRoster(Peer &peer);
       void sendProfile(Peer &peer, const PlayerState &state);
-      void sendGameStarted();
+      void sendGameStarted(Peer *peer = nullptr);
       void sendSnapshot(Peer &peer);
       Peer *peerForPlayer(const PlayerId &playerId);
       const Peer *peerForPlayer(const PlayerId &playerId) const;
       Peer *peerForConnection(MultiplayerConnection *connection);
-      bool hasActivePeerForPlayer(const PlayerId &playerId) const;
+      void dropPeerConnection(MultiplayerConnection *connection);
       bool isConnected(const PlayerId &playerId) const;
       void connectSessionSignals();
       void startPings();

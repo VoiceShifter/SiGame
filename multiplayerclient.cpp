@@ -334,6 +334,14 @@ void MultiplayerClient::handleFrame(const MultiplayerProtocol::Frame &frame)
             }
             m_reconnected = fields.value(QStringLiteral("reconnect")) ==
                             QStringLiteral("1");
+            bool actionIdOk = false;
+            const quint64 nextActionId =
+                  fields.value(QStringLiteral("nextActionId"))
+                        .toULongLong(&actionIdOk);
+            if (actionIdOk)
+            {
+                  m_nextActionId = std::max(m_nextActionId, nextActionId);
+            }
             emit connected(m_localPlayerId, m_reconnected);
             if (m_profileTransferId == QStringLiteral("none"))
             {

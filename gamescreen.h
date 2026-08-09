@@ -152,6 +152,13 @@ class GameScreen : public QWidget
       void showAnswer();
       void returnToBoard();
       void buildBoard(int roundIndex);
+      void setupRoundIntroPage();
+      void showRoundIntro(int roundIndex, unsigned int durationMs,
+                          unsigned int remainingMs);
+      void startRoundIntroScroll(unsigned int durationMs,
+                                 unsigned int remainingMs);
+      void finishSingleRoundIntro();
+      unsigned int roundIntroDuration(int roundIndex) const;
       bool isFinalRound(int roundIndex) const;
       bool hasAvailableQuestions() const;
       void advanceSinglePlayerRound();
@@ -206,7 +213,8 @@ class GameScreen : public QWidget
       void showNetworkAnswerBubble(const AnswerResult &result);
       void positionAnswerBubbles();
       void clearAnswerBubbles();
-      void applyPlayerGlow(QLabel *avatar, PlayerGlow glow);
+      void applyPlayerGlow(QLabel *avatar, PlayerGlow glow,
+                           bool connected = true);
       void setSinglePlayerGlow(PlayerGlow glow, bool clearAfterDelay);
       void rebuildNetworkPlayerCards();
       void clearNetworkPlayerCards();
@@ -225,6 +233,7 @@ class GameScreen : public QWidget
       QTimer *m_tickTimer;
       QElapsedTimer *m_globalTimer;
       QPropertyAnimation *m_progressAnimation;
+      QPropertyAnimation *m_roundIntroAnimation;
       QTimer *m_flashTimer;
       QTimer *m_mediaDurationTimer;
       QMediaPlayer *m_mediaPlayer{};
@@ -308,6 +317,10 @@ class GameScreen : public QWidget
       bool m_appealVoteSubmitted{};
       PlayerId m_appealAppellant;
       quint64 m_appealId{};
+      QWidget *m_roundIntroPage{};
+      QWidget *m_roundIntroViewport{};
+      QLabel *m_roundIntroTitleLabel{};
+      QLabel *m_roundIntroTopicLabel{};
       QWidget *m_appealPage{};
       QLabel *m_appealQuestionLabel{};
       QLabel *m_appealQuestionMediaLabel{};

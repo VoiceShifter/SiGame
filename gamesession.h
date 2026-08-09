@@ -30,6 +30,7 @@ class GameSession : public QObject
                                const QByteArray &profilePng);
       PlayerId playerIdForToken(const PlayerToken &token) const;
       bool hasPlayer(const PlayerId &playerId) const;
+      quint64 nextActionId(const PlayerId &playerId) const;
       QVector<PlayerState> players() const;
       const PlayerState *player(const PlayerId &playerId) const;
       PlayerState *player(const PlayerId &playerId);
@@ -152,6 +153,7 @@ class GameSession : public QObject
                       const PlayerId &owner = {});
       void handleTimeout();
       void beginPicking();
+      unsigned int roundIntroDuration() const;
       void selectRandomQuestion();
       void eliminateFinalTheme(const PlayerId &playerId, int theme,
                                quint64 actionId);

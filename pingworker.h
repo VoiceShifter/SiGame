@@ -25,6 +25,7 @@ class PingWorker : public QObject
     signals:
       void pingRequested(const PlayerId &playerId, quint64 pingId);
       void averageUpdated(const PlayerId &playerId, double rttMs);
+      void playerTimedOut(const PlayerId &playerId);
 
     private slots:
       void requestPings();

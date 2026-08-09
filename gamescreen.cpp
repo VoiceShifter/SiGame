@@ -69,6 +69,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       : QWidget(parent), ui(new Ui::GameScreen), m_tickTimer(new QTimer(this)),
         m_globalTimer(new QElapsedTimer),
         m_progressAnimation(new QPropertyAnimation(this)),
+        m_roundIntroAnimation(new QPropertyAnimation(this)),
         m_flashTimer(new QTimer(this)),
         m_mediaDurationTimer(new QTimer(this)),
         m_answerDuration(static_cast<unsigned int>(AnswerDuration) * 1000U),
@@ -113,6 +114,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       m_mediaDurationTimer->setSingleShot(true);
       connect(m_mediaDurationTimer, &QTimer::timeout, this,
               &GameScreen::finishMediaDisplay);
+      setupRoundIntroPage();
       setupAppealPage();
       setupGameFinishedPage();
       ui->progressBar->setRange(0, 1000);
@@ -419,7 +421,10 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
             }
             else
             {
-                  skipToRound(static_cast<int>(m_game.rounds.size()) - 1);
+                  const unsigned int introDuration = roundIntroDuration(0);
+                  showRoundIntro(0, introDuration, introDuration);
+                  startPhaseTimer(GamePhase::RoundIntro, introDuration);
+                  ui->pushButton_3->setEnabled(false);
             }
       }
       else
@@ -520,6 +525,7 @@ bool GameScreen::skipToRound(int roundIndex)
 
       m_tickTimer->stop();
       m_progressAnimation->stop();
+      m_roundIntroAnimation->stop();
       stopReactionFlash();
       stopMediaPlayback();
       resetAnswerInputState();
@@ -541,7 +547,6 @@ bool GameScreen::skipToRound(int roundIndex)
       ui->questionMediaLabel->hide();
       ui->AnswerBytton->setEnabled(false);
       ui->passButton->setEnabled(false);
-      ui->pushButton_3->setEnabled(true);
       ui->pushButton_5->setEnabled(false);
       for (Player &player : m_players)
       {
@@ -549,23 +554,170 @@ bool GameScreen::skipToRound(int roundIndex)
       }
 
       buildBoard(roundIndex);
-      ui->gameContentStack->setCurrentWidget(ui->boardPage);
       if (!hasAvailableQuestions())
       {
             advanceSinglePlayerRound();
             return true;
       }
-      if (isFinalRound(roundIndex) && !m_players.empty())
+      const unsigned int introDuration = roundIntroDuration(roundIndex);
+      showRoundIntro(roundIndex, introDuration, introDuration);
+      startPhaseTimer(GamePhase::RoundIntro, introDuration);
+      ui->pushButton_3->setEnabled(false);
+      return true;
+}
+
+void GameScreen::setupRoundIntroPage()
+{
+      m_roundIntroPage = new QWidget(ui->gameContentStack);
+      m_roundIntroPage->setObjectName(QStringLiteral("roundIntroPage"));
+      auto *layout = new QVBoxLayout(m_roundIntroPage);
+      layout->setContentsMargins(24, 24, 24, 24);
+      layout->setSpacing(16);
+
+      m_roundIntroTitleLabel = new QLabel(m_roundIntroPage);
+      QFont titleFont = m_roundIntroTitleLabel->font();
+      titleFont.setPointSize(28);
+      titleFont.setBold(true);
+      m_roundIntroTitleLabel->setFont(titleFont);
+      m_roundIntroTitleLabel->setAlignment(Qt::AlignCenter);
+      m_roundIntroTitleLabel->setWordWrap(true);
+      layout->addWidget(m_roundIntroTitleLabel);
+
+      m_roundIntroViewport = new QWidget(m_roundIntroPage);
+      m_roundIntroViewport->setObjectName(
+            QStringLiteral("roundIntroViewport"));
+      m_roundIntroViewport->setMinimumHeight(240);
+      m_roundIntroViewport->setSizePolicy(QSizePolicy::Expanding,
+                                          QSizePolicy::Expanding);
+      layout->addWidget(m_roundIntroViewport, 1);
+
+      m_roundIntroTopicLabel = new QLabel(m_roundIntroViewport);
+      QFont topicFont = m_roundIntroTopicLabel->font();
+      topicFont.setPointSize(40);
+      topicFont.setBold(true);
+      m_roundIntroTopicLabel->setFont(topicFont);
+      m_roundIntroTopicLabel->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+      m_roundIntroTopicLabel->setTextFormat(Qt::PlainText);
+      m_roundIntroTopicLabel->setWordWrap(true);
+      m_roundIntroTopicLabel->setContentsMargins(24, 12, 24, 12);
+
+      m_roundIntroAnimation->setTargetObject(m_roundIntroTopicLabel);
+      m_roundIntroAnimation->setPropertyName("pos");
+      m_roundIntroAnimation->setEasingCurve(QEasingCurve::Linear);
+      ui->gameContentStack->addWidget(m_roundIntroPage);
+}
+
+void GameScreen::showRoundIntro(int roundIndex, unsigned int durationMs,
+                                unsigned int remainingMs)
+{
+      if (roundIndex < 0 ||
+          roundIndex >= static_cast<int>(m_game.rounds.size()))
+      {
+            return;
+      }
+      m_roundIntroAnimation->stop();
+      const Round &round =
+            m_game.rounds[static_cast<std::size_t>(roundIndex)];
+      m_roundIntroTitleLabel->setText(
+            round.name.isEmpty()
+                  ? tr("Round %1").arg(roundIndex + 1)
+                  : tr("Round %1 — %2").arg(roundIndex + 1).arg(round.name));
+      QStringList topics;
+      for (const Theme &theme : round.themes)
+      {
+            topics.push_back(
+                  theme.name.isEmpty() ? tr("Unnamed topic") : theme.name);
+      }
+      if (topics.isEmpty())
+      {
+            topics.push_back(tr("No topics"));
+      }
+      m_roundIntroTopicLabel->setText(
+            topics.join(QStringLiteral("\n\n")));
+      ui->AnswerBytton->setEnabled(false);
+      ui->passButton->setEnabled(false);
+      ui->gameContentStack->setCurrentWidget(m_roundIntroPage);
+      QTimer::singleShot(
+            0, this,
+            [this, durationMs, remainingMs]()
+            { startRoundIntroScroll(durationMs, remainingMs); });
+}
+
+void GameScreen::startRoundIntroScroll(unsigned int durationMs,
+                                       unsigned int remainingMs)
+{
+      if (ui->gameContentStack->currentWidget() != m_roundIntroPage ||
+          m_roundIntroViewport == nullptr ||
+          m_roundIntroTopicLabel == nullptr)
+      {
+            return;
+      }
+      const int viewportWidth = m_roundIntroViewport->contentsRect().width();
+      const int viewportHeight = m_roundIntroViewport->contentsRect().height();
+      if (viewportWidth <= 0 || viewportHeight <= 0)
+      {
+            return;
+      }
+      const int contentHeight = std::max(
+            m_roundIntroTopicLabel->heightForWidth(viewportWidth),
+            m_roundIntroTopicLabel->sizeHint().height());
+      m_roundIntroTopicLabel->resize(viewportWidth,
+                                     std::max(1, contentHeight));
+
+      const unsigned int effectiveDuration = std::max(1U, durationMs);
+      const unsigned int elapsed =
+            effectiveDuration - std::min(remainingMs, effectiveDuration);
+      m_roundIntroAnimation->stop();
+      m_roundIntroAnimation->setStartValue(QPoint(0, viewportHeight));
+      m_roundIntroAnimation->setEndValue(
+            QPoint(0, -m_roundIntroTopicLabel->height()));
+      m_roundIntroAnimation->setDuration(
+            static_cast<int>(std::min<unsigned int>(
+                  effectiveDuration,
+                  static_cast<unsigned int>(
+                        std::numeric_limits<int>::max()))));
+      m_roundIntroAnimation->start();
+      m_roundIntroAnimation->setCurrentTime(
+            static_cast<int>(std::min<unsigned int>(
+                  elapsed,
+                  static_cast<unsigned int>(
+                        std::numeric_limits<int>::max()))));
+}
+
+void GameScreen::finishSingleRoundIntro()
+{
+      m_roundIntroAnimation->stop();
+      ui->pushButton_3->setEnabled(true);
+      ui->gameContentStack->setCurrentWidget(ui->boardPage);
+      if (!hasAvailableQuestions())
+      {
+            advanceSinglePlayerRound();
+            return;
+      }
+      if (isFinalRound(m_boardRoundIndex) && !m_players.empty())
       {
             m_boardStatusLabel->setText(
                   tr("%1 eliminates a topic").arg(m_players.front().name));
             if (beginSingleFinalWagersIfReady())
             {
-                  return true;
+                  return;
             }
       }
       startPhaseTimer(GamePhase::PickingQuestion, m_questionPickDuration);
-      return true;
+}
+
+unsigned int GameScreen::roundIntroDuration(int roundIndex) const
+{
+      if (roundIndex < 0 ||
+          roundIndex >= static_cast<int>(m_game.rounds.size()))
+      {
+            return 2500U;
+      }
+      const quint64 topicCount = static_cast<quint64>(
+            m_game.rounds[static_cast<std::size_t>(roundIndex)].themes.size());
+      return static_cast<unsigned int>(std::min<quint64>(
+            std::numeric_limits<unsigned int>::max(),
+            std::max<quint64>(2500U, topicCount * 800U)));
 }
 
 void GameScreen::setupAppealPage()
@@ -692,6 +844,7 @@ void GameScreen::showGameFinished()
 {
       m_tickTimer->stop();
       m_progressAnimation->stop();
+      m_roundIntroAnimation->stop();
       stopReactionFlash();
       stopMediaPlayback();
       clearAnswerBubbles();
@@ -980,11 +1133,32 @@ void GameScreen::resizeEvent(QResizeEvent *event)
       fitDisplayedPixmap();
       fitAnswerOptionsTable();
       fitAppealPixmaps();
+      if (ui->gameContentStack->currentWidget() == m_roundIntroPage)
+      {
+            const unsigned int duration =
+                  m_mode == GameScreenMode::SinglePlayer
+                        ? m_phaseDuration
+                        : m_networkPhase.durationMs;
+            const unsigned int remaining =
+                  m_mode == GameScreenMode::SinglePlayer
+                        ? static_cast<unsigned int>(std::max<qint64>(
+                                0, static_cast<qint64>(m_phaseDuration) -
+                                         m_globalTimer->elapsed()))
+                        : m_networkPhase.remainingMs;
+            QTimer::singleShot(
+                  0, this,
+                  [this, duration, remaining]()
+                  { startRoundIntroScroll(duration, remaining); });
+      }
       QTimer::singleShot(0, this, &GameScreen::positionAnswerBubbles);
 }
 
 void GameScreen::startPhaseTimer(GamePhase phase, unsigned int durationMs)
 {
+      if (phase != GamePhase::RoundIntro)
+      {
+            m_roundIntroAnimation->stop();
+      }
       if (phase != GamePhase::WaitingForReaction)
       {
             stopReactionFlash();
@@ -1006,6 +1180,7 @@ void GameScreen::setProgressBarColor(GamePhase phase)
       QString color;
       switch (phase)
       {
+      case GamePhase::RoundIntro:
       case GamePhase::PickingQuestion:
       case GamePhase::ReadingQuestion:
       case GamePhase::SecretTargetSelection:
@@ -1062,6 +1237,9 @@ void GameScreen::handlePhaseTimeout()
 {
       switch (m_phase)
       {
+      case GamePhase::RoundIntro:
+            finishSingleRoundIntro();
+            break;
       case GamePhase::PickingQuestion:
             pickRandomQuestion();
             break;
@@ -1501,20 +1679,11 @@ void GameScreen::advanceSinglePlayerRound()
                 ui->tableWidget->columnCount() > 0)
             {
                   m_singleFinalEliminatorIndex = 0;
-                  if (isFinalRound(nextRound) && !m_players.empty())
-                  {
-                        m_boardStatusLabel->setText(
-                              tr("%1 eliminates a topic")
-                                    .arg(m_players.front().name));
-                  }
-                  ui->gameContentStack->setCurrentWidget(ui->boardPage);
-                  if (isFinalRound(nextRound) &&
-                      beginSingleFinalWagersIfReady())
-                  {
-                        return;
-                  }
-                  startPhaseTimer(GamePhase::PickingQuestion,
-                                  m_questionPickDuration);
+                  const unsigned int introDuration =
+                        roundIntroDuration(nextRound);
+                  showRoundIntro(nextRound, introDuration, introDuration);
+                  startPhaseTimer(GamePhase::RoundIntro, introDuration);
+                  ui->pushButton_3->setEnabled(false);
                   return;
             }
             ++nextRound;
@@ -2801,6 +2970,10 @@ void GameScreen::applyPhase(const PhaseState &phase)
       m_phase = phase.phase;
       m_networkPhaseSequence = phase.phaseSequence;
       m_networkQuestionSequence = phase.questionSequence;
+      if (phase.phase != SessionPhase::RoundIntro)
+      {
+            m_roundIntroAnimation->stop();
+      }
       if (phaseChanged && m_answerDialog != nullptr)
       {
             QInputDialog *dialog = m_answerDialog.data();
@@ -2818,7 +2991,8 @@ void GameScreen::applyPhase(const PhaseState &phase)
             finishMediaDisplay();
       }
       if (phaseChanged &&
-          (phase.phase == SessionPhase::PickingQuestion ||
+          (phase.phase == SessionPhase::RoundIntro ||
+           phase.phase == SessionPhase::PickingQuestion ||
            phase.phase == SessionPhase::Lobby ||
            phase.phase == SessionPhase::Finished))
       {
@@ -2841,7 +3015,13 @@ void GameScreen::applyPhase(const PhaseState &phase)
             m_appealAppellant.clear();
             m_appealId = 0;
       }
-      if (phase.phase == SessionPhase::AppealVoting)
+      if (phase.phase == SessionPhase::RoundIntro)
+      {
+            m_pickerId = phase.owner;
+            showRoundIntro(m_networkBoard.round, phase.durationMs,
+                           phase.remainingMs);
+      }
+      else if (phase.phase == SessionPhase::AppealVoting)
       {
             if (phaseChanged)
             {
@@ -3426,7 +3606,8 @@ void GameScreen::clearAnswerBubbles()
       }
 }
 
-void GameScreen::applyPlayerGlow(QLabel *avatar, PlayerGlow glow)
+void GameScreen::applyPlayerGlow(QLabel *avatar, PlayerGlow glow,
+                                 bool connected)
 {
       if (avatar == nullptr)
       {
@@ -3448,7 +3629,12 @@ void GameScreen::applyPlayerGlow(QLabel *avatar, PlayerGlow glow)
       case PlayerGlow::None:
             break;
       }
-      if (glow != PlayerGlow::None)
+      if (!connected)
+      {
+            glowColor = Qt::transparent;
+            borderColor = QStringLiteral("#808080");
+      }
+      else if (glow != PlayerGlow::None)
       {
             borderColor = glowColor.name();
       }
@@ -3564,7 +3750,8 @@ void GameScreen::rebuildNetworkPlayerCards()
                   m_networkCardProfiles.insert(state.id, state.profilePng);
             }
             applyPlayerGlow(
-                  avatar, m_playerGlows.value(state.id, PlayerGlow::None));
+                  avatar, m_playerGlows.value(state.id, PlayerGlow::None),
+                  state.connected);
             avatar->setCursor(m_secretTargetSelection && state.isPicker &&
                                       state.id != m_localPlayerId
                                     ? Qt::PointingHandCursor

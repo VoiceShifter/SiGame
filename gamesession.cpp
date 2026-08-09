@@ -167,6 +167,11 @@ bool GameSession::hasPlayer(const PlayerId &playerId) const
       return player(playerId) != nullptr;
 }
 
+quint64 GameSession::nextActionId(const PlayerId &playerId) const
+{
+      return m_lastActionIds.value(playerId, 0) + 1;
+}
+
 QVector<PlayerState> GameSession::players() const { return m_players; }
 
 const PlayerState *GameSession::player(const PlayerId &playerId) const
@@ -245,7 +250,8 @@ SessionSnapshot GameSession::snapshot() const
                      m_questionSequence,
                      m_phaseDuration,
                      remainingMs(),
-                     m_phase == SessionPhase::PickingQuestion
+                     (m_phase == SessionPhase::RoundIntro ||
+                      m_phase == SessionPhase::PickingQuestion)
                            ? m_currentPicker
                            : m_answerOwner,
                      m_paused};
@@ -1184,6 +1190,9 @@ void GameSession::handleTimeout()
       {
       case SessionPhase::Lobby:
             break;
+      case SessionPhase::RoundIntro:
+            beginPicking();
+            break;
       case SessionPhase::PickingQuestion:
             selectRandomQuestion();
             break;
@@ -1304,20 +1313,6 @@ void GameSession::beginPicking()
             advanceRoundOrFinish();
             return;
       }
-      if (currentRoundIsFinal() && remainingFinalThemeCount() <= 1)
-      {
-            const QPair<int, int> finalQuestion = remainingFinalQuestion();
-            if (finalQuestion.first < 0)
-            {
-                  advanceRoundOrFinish();
-            }
-            else
-            {
-                  beginFinalWagering(finalQuestion.first,
-                                     finalQuestion.second);
-            }
-            return;
-      }
       if (!isConnected(m_currentPicker))
       {
             m_currentPicker = chooseRandomConnectedPlayer();
@@ -1334,12 +1329,44 @@ void GameSession::beginPicking()
       {
             m_announcedRound = m_boardRound;
             emit roundStarted(m_boardRound, m_currentPicker);
+            emit pickerChanged(m_currentPicker);
+            emitBoardChanged();
+            startPhase(SessionPhase::RoundIntro, roundIntroDuration(),
+                       m_currentPicker);
+            emitPlayersChanged();
+            return;
+      }
+      if (currentRoundIsFinal() && remainingFinalThemeCount() <= 1)
+      {
+            const QPair<int, int> finalQuestion = remainingFinalQuestion();
+            if (finalQuestion.first < 0)
+            {
+                  advanceRoundOrFinish();
+            }
+            else
+            {
+                  beginFinalWagering(finalQuestion.first,
+                                     finalQuestion.second);
+            }
+            return;
       }
       emit pickerChanged(m_currentPicker);
       emitBoardChanged();
       startPhase(SessionPhase::PickingQuestion, m_config.questionPickDurationMs,
                  m_currentPicker);
       emitPlayersChanged();
+}
+
+unsigned int GameSession::roundIntroDuration() const
+{
+      if (m_boardRound < 0 ||
+          m_boardRound >= static_cast<int>(m_game.rounds.size()))
+      {
+            return 2500U;
+      }
+      const quint64 topicCount = static_cast<quint64>(
+            m_game.rounds[static_cast<std::size_t>(m_boardRound)].themes.size());
+      return clampDuration(std::max<quint64>(2500U, topicCount * 800U));
 }
 
 void GameSession::selectRandomQuestion()

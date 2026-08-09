@@ -136,10 +136,6 @@ MultiplayerHost::MultiplayerHost(const GameConfig &config, const Game &game,
       host.connected  = true;
       host.ready      = true;
       m_session->addPlayer(host);
-      if (!m_game.rounds.empty())
-      {
-            m_session->skipToRound(static_cast<int>(m_game.rounds.size()) - 1);
-      }
 #ifndef Q_OS_WASM
       m_server = new QTcpServer(this);
       connect(m_server, &QTcpServer::newConnection, this,
@@ -587,13 +583,35 @@ void MultiplayerHost::handleLine(const QByteArray &line)
 
 void MultiplayerHost::handleDisconnected()
 {
-      auto *connection = qobject_cast<MultiplayerConnection *>(sender());
-      Peer *peer       = peerForConnection(connection);
-      if (peer == nullptr)
+      dropPeerConnection(
+            qobject_cast<MultiplayerConnection *>(sender()));
+}
+
+void MultiplayerHost::dropPeerConnection(
+      MultiplayerConnection *connection)
+{
+      auto peer = m_peers.find(connection);
+      if (peer == m_peers.end())
       {
             return;
       }
       const PlayerId playerId = peer->playerId;
+      m_peers.erase(peer);
+#ifdef Q_OS_WASM
+      for (auto iterator = m_bridgeConnections.begin();
+           iterator != m_bridgeConnections.end();)
+      {
+            if (iterator.value() == connection)
+            {
+                  iterator = m_bridgeConnections.erase(iterator);
+            }
+            else
+            {
+                  ++iterator;
+            }
+      }
+#endif
+      connection->disconnect(this);
       if (!playerId.isEmpty())
       {
             m_session->setPlayerConnected(playerId, false);
@@ -604,11 +622,8 @@ void MultiplayerHost::handleDisconnected()
                        {QStringLiteral("reserved"), QStringLiteral("1")}});
             sendRoster();
       }
-      m_peers.remove(connection);
-      if (connection != nullptr)
-      {
-            connection->deleteLater();
-      }
+      connection->close();
+      connection->deleteLater();
 }
 
 void MultiplayerHost::handleTransportError(const QString &message)
@@ -747,7 +762,7 @@ void MultiplayerHost::handleHello(Peer &peer,
       const PlayerId reservedId = m_session->playerIdForToken(token);
       if (!reservedId.isEmpty())
       {
-            if (hasActivePeerForPlayer(reservedId))
+            if (reservedId == m_localPlayerId)
             {
                   sendError(peer, QStringLiteral("LOBBY_FULL"),
                             QStringLiteral(
@@ -755,6 +770,15 @@ void MultiplayerHost::handleHello(Peer &peer,
                             requestId);
                   peer.connection->close();
                   return;
+            }
+            Peer *previousPeer = peerForPlayer(reservedId);
+            if (previousPeer != nullptr &&
+                previousPeer->connection != peer.connection)
+            {
+                  previousPeer->playerId.clear();
+                  previousPeer->ready = false;
+                  previousPeer->handshaken = false;
+                  previousPeer->connection->close();
             }
             peer.playerId   = reservedId;
             peer.token      = token;
@@ -773,6 +797,8 @@ void MultiplayerHost::handleHello(Peer &peer,
                        {QStringLiteral("sessionId"), m_session->sessionId()},
                        {QStringLiteral("playerId"), reservedId},
                        {QStringLiteral("reconnect"), QStringLiteral("1")},
+                       {QStringLiteral("nextActionId"),
+                        stringValue(m_session->nextActionId(reservedId))},
                        {QStringLiteral("maxPlayers"),
                         QString::number(m_config.maxPlayers)},
                        {QStringLiteral("packHash"), m_config.packHash},
@@ -823,6 +849,7 @@ void MultiplayerHost::handleHello(Peer &peer,
                  {QStringLiteral("sessionId"), m_session->sessionId()},
                  {QStringLiteral("playerId"), peer.playerId},
                  {QStringLiteral("reconnect"), QStringLiteral("0")},
+                 {QStringLiteral("nextActionId"), QStringLiteral("1")},
                  {QStringLiteral("maxPlayers"),
                   QString::number(m_config.maxPlayers)},
                  {QStringLiteral("packHash"), m_config.packHash},
@@ -959,7 +986,7 @@ void MultiplayerHost::handleReady(Peer &peer,
       sendRoster();
       if (m_started)
       {
-            sendGameStarted();
+            sendGameStarted(&peer);
             sendSnapshot(peer);
       }
       else
@@ -1393,25 +1420,32 @@ void MultiplayerHost::sendProfile(Peer &peer, const PlayerState &state)
       peer.sentProfileHashes.insert(state.id, hash);
 }
 
-void MultiplayerHost::sendGameStarted()
+void MultiplayerHost::sendGameStarted(Peer *peer)
 {
-      broadcast(
-            QStringLiteral("GAME_STARTED"),
-            {{QStringLiteral("sessionId"), m_session->sessionId()},
-             {QStringLiteral("round"), stringValue(m_session->roundIndex())},
-             {QStringLiteral("maxPlayers"), stringValue(m_config.maxPlayers)},
-             {QStringLiteral("answerDurationMs"),
-              stringValue(m_config.answerDurationMs)},
-             {QStringLiteral("questionDurationMs"),
-              stringValue(m_config.questionDurationMs)},
-             {QStringLiteral("questionPickDurationMs"),
-              stringValue(m_config.questionPickDurationMs)},
-             {QStringLiteral("answerWaitDurationMs"),
-              stringValue(m_config.answerWaitDurationMs)},
-             {QStringLiteral("answerRevealDurationMs"),
-              stringValue(m_config.answerRevealDurationMs)},
-             {QStringLiteral("appealDurationMs"),
-              stringValue(m_config.appealDurationMs)}});
+      const QMap<QString, QString> fields{
+            {QStringLiteral("sessionId"), m_session->sessionId()},
+            {QStringLiteral("round"), stringValue(m_session->roundIndex())},
+            {QStringLiteral("maxPlayers"), stringValue(m_config.maxPlayers)},
+            {QStringLiteral("answerDurationMs"),
+             stringValue(m_config.answerDurationMs)},
+            {QStringLiteral("questionDurationMs"),
+             stringValue(m_config.questionDurationMs)},
+            {QStringLiteral("questionPickDurationMs"),
+             stringValue(m_config.questionPickDurationMs)},
+            {QStringLiteral("answerWaitDurationMs"),
+             stringValue(m_config.answerWaitDurationMs)},
+            {QStringLiteral("answerRevealDurationMs"),
+             stringValue(m_config.answerRevealDurationMs)},
+            {QStringLiteral("appealDurationMs"),
+             stringValue(m_config.appealDurationMs)}};
+      if (peer == nullptr)
+      {
+            broadcast(QStringLiteral("GAME_STARTED"), fields);
+      }
+      else
+      {
+            sendFrame(*peer, QStringLiteral("GAME_STARTED"), fields);
+      }
 }
 
 void MultiplayerHost::sendSnapshot(Peer &peer)
@@ -1613,17 +1647,6 @@ MultiplayerHost::peerForConnection(MultiplayerConnection *connection)
 {
       auto iterator = m_peers.find(connection);
       return iterator == m_peers.end() ? nullptr : &iterator.value();
-}
-
-bool MultiplayerHost::hasActivePeerForPlayer(const PlayerId &playerId) const
-{
-      if (playerId == m_localPlayerId)
-      {
-            return true;
-      }
-      const Peer *peer = peerForPlayer(playerId);
-      return peer != nullptr && peer->connection != nullptr &&
-             peer->connection->isConnected();
 }
 
 void MultiplayerHost::connectSessionSignals()
@@ -2014,6 +2037,15 @@ void MultiplayerHost::startPings()
                     }
                     m_session->setReactionDecisionWindowMs(
                           static_cast<unsigned int>(std::ceil(maximumRtt)));
+              });
+      connect(m_pingWorker, &PingWorker::playerTimedOut, this,
+              [this](const PlayerId &playerId)
+              {
+                    Peer *peer = peerForPlayer(playerId);
+                    if (peer != nullptr && peer->connection != nullptr)
+                    {
+                          dropPeerConnection(peer->connection);
+                    }
               });
       connect(m_session, &GameSession::playersChanged, m_pingWorker,
               [worker  = m_pingWorker,

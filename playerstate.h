@@ -18,6 +18,7 @@ using PlayerToken = QString;
 enum class SessionPhase
 {
       Lobby,
+      RoundIntro,
       PickingQuestion,
       SecretTargetSelection,
       SecretWager,

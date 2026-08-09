@@ -717,6 +717,10 @@ void MultiplayerClient::handleFrame(const MultiplayerProtocol::Frame &frame)
             state.connected = fields.value(QStringLiteral("connected")) ==
                               QStringLiteral("1");
             state.balance = fields.value(QStringLiteral("balance")).toInt();
+            state.correctAnswers =
+                  fields.value(QStringLiteral("correctAnswers")).toInt();
+            state.wrongAnswers =
+                  fields.value(QStringLiteral("wrongAnswers")).toInt();
             state.hasPassed = fields.value(QStringLiteral("hasPassed")) ==
                               QStringLiteral("1");
             state.answeredIncorrectly =
@@ -758,10 +762,14 @@ void MultiplayerClient::handleFrame(const MultiplayerProtocol::Frame &frame)
             emitLobby();
             return;
       }
-      if (frame.command == QStringLiteral("GAME_FINISHED") ||
-          frame.command == QStringLiteral("GAME_ABORTED"))
+      if (frame.command == QStringLiteral("GAME_FINISHED"))
       {
             emit finished();
+            return;
+      }
+      if (frame.command == QStringLiteral("GAME_ABORTED"))
+      {
+            emit disconnected(tr("The host ended the game"));
             return;
       }
       if (frame.command == QStringLiteral("ERROR"))
@@ -941,6 +949,10 @@ void MultiplayerClient::parseRosterPlayer(
                         QStringLiteral("1");
       state.ready = fields.value(QStringLiteral("ready")) == QStringLiteral("1");
       state.balance = fields.value(QStringLiteral("balance")).toInt();
+      state.correctAnswers =
+            fields.value(QStringLiteral("correctAnswers")).toInt();
+      state.wrongAnswers =
+            fields.value(QStringLiteral("wrongAnswers")).toInt();
       state.hasPassed = fields.value(QStringLiteral("hasPassed")) ==
                         QStringLiteral("1");
       state.answeredIncorrectly =

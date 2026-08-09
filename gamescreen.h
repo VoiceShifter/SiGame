@@ -24,6 +24,7 @@ class QLabel;
 class QMediaPlayer;
 class QResizeEvent;
 class QPropertyAnimation;
+class QTableWidget;
 class QVideoWidget;
 
 namespace Ui
@@ -102,6 +103,7 @@ class GameScreen : public QWidget
       void pauseRequested(bool paused);
       void appealRequested();
       void appealVoteSubmitted(bool accepted);
+      void returnToMenuRequested();
       void incorrectAnswerSubmitted(PlayerId playerId, const QString &answer);
       void forAllQuestionSelected(int roundIndex, int themeIndex,
                                   int questionIndex);
@@ -137,6 +139,8 @@ class GameScreen : public QWidget
             QLabel *balanceLabel{};
             QLabel *answerBubble{};
             PlayerGlow glow{PlayerGlow::None};
+            int correctAnswers{};
+            int wrongAnswers{};
       };
 
       void startPhaseTimer(GamePhase phase, unsigned int durationMs);
@@ -192,6 +196,8 @@ class GameScreen : public QWidget
       void applyNetworkQuestion(const QuestionPresentation &presentation);
       void applyNetworkBoard(const BoardState &board);
       void setupAppealPage();
+      void setupGameFinishedPage();
+      void showGameFinished();
       void fitAppealPixmaps();
       QString displayAnswerText(const QString &answer) const;
       void submitAppealVote(bool accepted);
@@ -309,6 +315,8 @@ class GameScreen : public QWidget
       QLabel *m_appealSubmittedLabel{};
       QLabel *m_appealCorrectAnswerLabel{};
       QLabel *m_appealCorrectAnswerMediaLabel{};
+      QWidget *m_gameFinishedPage{};
+      QTableWidget *m_gameFinishedTable{};
       MultiplayerHost *m_host{};
       MultiplayerClient *m_client{};
 };

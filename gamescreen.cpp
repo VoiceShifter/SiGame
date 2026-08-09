@@ -6,6 +6,7 @@
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QAudioOutput>
 #endif
+#include <QAbstractItemView>
 #include <QColor>
 #include <QDebug>
 #include <QFileInfo>
@@ -14,6 +15,7 @@
 #include <QDir>
 #include <QFontMetrics>
 #include <QGraphicsDropShadowEffect>
+#include <QHeaderView>
 #include <QInputDialog>
 #include <QMediaPlayer>
 #include <QMouseEvent>
@@ -25,6 +27,7 @@
 #include <QScreen>
 #include <QSet>
 #include <QStringList>
+#include <QTableWidget>
 #include <QTimer>
 #include <QUrl>
 #include <QVideoWidget>
@@ -111,6 +114,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       connect(m_mediaDurationTimer, &QTimer::timeout, this,
               &GameScreen::finishMediaDisplay);
       setupAppealPage();
+      setupGameFinishedPage();
       ui->progressBar->setRange(0, 1000);
       m_progressAnimation->setTargetObject(ui->progressBar);
       m_progressAnimation->setPropertyName("value");
@@ -642,6 +646,177 @@ void GameScreen::setupAppealPage()
       ui->gameContentStack->addWidget(m_appealPage);
 }
 
+void GameScreen::setupGameFinishedPage()
+{
+      m_gameFinishedPage = new QWidget(ui->gameContentStack);
+      m_gameFinishedPage->setObjectName(QStringLiteral("gameFinishedPage"));
+      auto *layout = new QVBoxLayout(m_gameFinishedPage);
+      layout->setContentsMargins(24, 24, 24, 24);
+      layout->setSpacing(16);
+
+      auto *title = new QLabel(tr("Final standings"), m_gameFinishedPage);
+      QFont titleFont = title->font();
+      titleFont.setPointSize(32);
+      titleFont.setBold(true);
+      title->setFont(titleFont);
+      title->setAlignment(Qt::AlignCenter);
+      layout->addWidget(title);
+
+      m_gameFinishedTable = new QTableWidget(m_gameFinishedPage);
+      m_gameFinishedTable->setColumnCount(6);
+      m_gameFinishedTable->setHorizontalHeaderLabels(
+            {tr("Place"), tr("Profile"), tr("Player"), tr("Points"),
+             tr("Correct"), tr("Wrong")});
+      m_gameFinishedTable->verticalHeader()->hide();
+      m_gameFinishedTable->horizontalHeader()->setSectionResizeMode(
+            QHeaderView::Stretch);
+      m_gameFinishedTable->horizontalHeader()->setSectionResizeMode(
+            0, QHeaderView::ResizeToContents);
+      m_gameFinishedTable->horizontalHeader()->setSectionResizeMode(
+            1, QHeaderView::ResizeToContents);
+      m_gameFinishedTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+      m_gameFinishedTable->setSelectionMode(QAbstractItemView::NoSelection);
+      m_gameFinishedTable->setFocusPolicy(Qt::NoFocus);
+      m_gameFinishedTable->setAlternatingRowColors(true);
+      layout->addWidget(m_gameFinishedTable, 1);
+
+      auto *returnButton =
+            new QPushButton(tr("Return to main menu"), m_gameFinishedPage);
+      connect(returnButton, &QPushButton::clicked, this,
+              &GameScreen::returnToMenuRequested);
+      layout->addWidget(returnButton, 0, Qt::AlignCenter);
+      ui->gameContentStack->addWidget(m_gameFinishedPage);
+}
+
+void GameScreen::showGameFinished()
+{
+      m_tickTimer->stop();
+      m_progressAnimation->stop();
+      stopReactionFlash();
+      stopMediaPlayback();
+      clearAnswerBubbles();
+      resetAnswerInputState();
+      m_phase = GamePhase::Finished;
+      m_forAllAnswering = false;
+      m_canAnswer = false;
+      m_canPass = false;
+      m_canAppeal = false;
+      ui->progressBar->setValue(ui->progressBar->minimum());
+      ui->AnswerBytton->setEnabled(false);
+      ui->passButton->setEnabled(false);
+      ui->appealButton->hide();
+
+      struct Standing
+      {
+            int order{};
+            QString name;
+            int balance{};
+            int correctAnswers{};
+            int wrongAnswers{};
+            QPixmap profile;
+      };
+      std::vector<Standing> standings;
+      const QPixmap fallback(QStringLiteral(":/Images/default.jpg"));
+      if (m_mode == GameScreenMode::SinglePlayer)
+      {
+            for (std::size_t index = 0; index < m_players.size(); ++index)
+            {
+                  const Player &player = m_players[index];
+                  QPixmap profile = fallback;
+                  if (player.avatarLabel != nullptr)
+                  {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                        const QPixmap current = player.avatarLabel->pixmap();
+                        if (!current.isNull())
+                        {
+                              profile = current;
+                        }
+#else
+                        const QPixmap *current = player.avatarLabel->pixmap();
+                        if (current != nullptr && !current->isNull())
+                        {
+                              profile = *current;
+                        }
+#endif
+                  }
+                  standings.push_back(
+                        {static_cast<int>(index),
+                         player.name.isEmpty() ? tr("Unnamed player")
+                                               : player.name,
+                         player.balance, player.correctAnswers,
+                         player.wrongAnswers, profile});
+            }
+      }
+      else
+      {
+            for (int index = 0; index < m_networkPlayers.size(); ++index)
+            {
+                  const PlayerState &state = m_networkPlayers[index];
+                  QPixmap profile = fallback;
+                  QPixmap uploaded;
+                  if (!state.profilePng.isEmpty() &&
+                      uploaded.loadFromData(state.profilePng))
+                  {
+                        profile = uploaded;
+                  }
+                  standings.push_back(
+                        {index,
+                         state.nickname.isEmpty() ? tr("Unnamed player")
+                                                  : state.nickname,
+                         state.balance, state.correctAnswers,
+                         state.wrongAnswers, profile});
+            }
+      }
+      std::stable_sort(
+            standings.begin(), standings.end(),
+            [](const Standing &left, const Standing &right)
+            {
+                  if (left.balance != right.balance)
+                  {
+                        return left.balance > right.balance;
+                  }
+                  return left.order < right.order;
+            });
+
+      m_gameFinishedTable->clearContents();
+      m_gameFinishedTable->setRowCount(
+            static_cast<int>(standings.size()));
+      int place = 0;
+      int previousBalance = 0;
+      for (int row = 0; row < static_cast<int>(standings.size()); ++row)
+      {
+            const Standing &standing =
+                  standings[static_cast<std::size_t>(row)];
+            if (row == 0 || standing.balance != previousBalance)
+            {
+                  place = row + 1;
+                  previousBalance = standing.balance;
+            }
+            const auto addItem = [this, row](int column, const QString &text)
+            {
+                  auto *item = new QTableWidgetItem(text);
+                  item->setTextAlignment(Qt::AlignCenter);
+                  m_gameFinishedTable->setItem(row, column, item);
+            };
+            addItem(0, QString::number(place));
+
+            auto *profile = new QLabel(m_gameFinishedTable);
+            profile->setFixedSize(64, 64);
+            profile->setAlignment(Qt::AlignCenter);
+            profile->setPixmap(standing.profile.scaled(
+                  profile->size(), Qt::KeepAspectRatio,
+                  Qt::SmoothTransformation));
+            m_gameFinishedTable->setCellWidget(row, 1, profile);
+            m_gameFinishedTable->setRowHeight(row, 72);
+
+            addItem(2, standing.name);
+            addItem(3, QString::number(standing.balance));
+            addItem(4, QString::number(standing.correctAnswers));
+            addItem(5, QString::number(standing.wrongAnswers));
+      }
+      ui->gameContentStack->setCurrentWidget(m_gameFinishedPage);
+}
+
 void GameScreen::fitAppealPixmaps()
 {
       const auto fit = [](const QPixmap &source, QLabel *label)
@@ -932,9 +1107,7 @@ void GameScreen::handlePhaseTimeout()
             }
             break;
       case GamePhase::FinalWager:
-            submitSingleFinalWager(m_answerDialog == nullptr
-                                         ? 0
-                                         : m_answerDialog->intValue());
+            submitSingleFinalWager(0);
             break;
       case GamePhase::Lobby:
       case GamePhase::SecretTargetSelection:
@@ -1346,13 +1519,7 @@ void GameScreen::advanceSinglePlayerRound()
             }
             ++nextRound;
       }
-      m_tickTimer->stop();
-      m_progressAnimation->stop();
-      m_phase = GamePhase::Finished;
-      ui->progressBar->setValue(ui->progressBar->minimum());
-      ui->AnswerBytton->setEnabled(false);
-      ui->passButton->setEnabled(false);
-      ui->gameContentStack->setCurrentWidget(ui->boardPage);
+      showGameFinished();
 }
 
 void GameScreen::eliminateSingleFinalTheme(int themeIndex)
@@ -1493,9 +1660,11 @@ void GameScreen::submitSingleFinalWager(int amount)
             m_singleFinalWagerPlayerIndex)] = std::clamp(amount, 0, maximum);
       if (m_answerDialog != nullptr)
       {
-            disconnect(m_answerDialog, nullptr, this, nullptr);
-            m_answerDialog->close();
+            QInputDialog *dialog = m_answerDialog.data();
             m_answerDialog = nullptr;
+            disconnect(dialog, nullptr, this, nullptr);
+            dialog->hide();
+            dialog->deleteLater();
       }
       ++m_singleFinalWagerPlayerIndex;
       QTimer::singleShot(0, this, &GameScreen::promptSingleFinalWager);
@@ -1572,6 +1741,14 @@ void GameScreen::finishSingleFinalAnswer(bool correct)
       const std::size_t index =
             static_cast<std::size_t>(m_singleFinalAnswerPlayerIndex);
       m_singleFinalCorrect[index] = correct;
+      if (correct)
+      {
+            ++m_players[index].correctAnswers;
+      }
+      else
+      {
+            ++m_players[index].wrongAnswers;
+      }
       if (m_answerDialog != nullptr)
       {
             disconnect(m_answerDialog, nullptr, this, nullptr);
@@ -2171,6 +2348,14 @@ void GameScreen::applyAnswerResult(bool isCorrect,
       m_answerResultApplied = true;
       m_submittedAnswer = submittedAnswer;
       Player &player = m_players.front();
+      if (isCorrect)
+      {
+            ++player.correctAnswers;
+      }
+      else
+      {
+            ++player.wrongAnswers;
+      }
       const QString displayedAnswer = displayAnswerText(submittedAnswer).trimmed();
       if (player.answerBubble != nullptr && !displayedAnswer.isEmpty())
       {
@@ -2616,6 +2801,15 @@ void GameScreen::applyPhase(const PhaseState &phase)
       m_phase = phase.phase;
       m_networkPhaseSequence = phase.phaseSequence;
       m_networkQuestionSequence = phase.questionSequence;
+      if (phaseChanged && m_answerDialog != nullptr)
+      {
+            QInputDialog *dialog = m_answerDialog.data();
+            m_answerDialog = nullptr;
+            disconnect(dialog, nullptr, this, nullptr);
+            dialog->hide();
+            dialog->deleteLater();
+            m_networkAnswerInputOpened = false;
+      }
       if (phaseChanged &&
           (phase.phase == SessionPhase::WaitingForReaction ||
            phase.phase == SessionPhase::Answering ||
@@ -2706,6 +2900,11 @@ void GameScreen::applyPhase(const PhaseState &phase)
       m_forAllAnswering = phase.phase == SessionPhase::ForAllAnswering;
       setNetworkPhaseTimer(phase);
       setNetworkControls();
+      if (phase.phase == SessionPhase::Finished)
+      {
+            showGameFinished();
+            return;
+      }
       if (phase.phase == SessionPhase::Answering &&
           m_answerOwnerId == m_localPlayerId &&
           m_networkQuestion.has_value() && !m_networkAnswerSubmitted &&
@@ -3001,7 +3200,16 @@ void GameScreen::applyWagerPrompt(const SecretWagerParameters &parameters)
       {
             return;
       }
-      auto *dialog = new QInputDialog(this);
+      if (m_answerDialog != nullptr)
+      {
+            QInputDialog *previous = m_answerDialog.data();
+            m_answerDialog = nullptr;
+            disconnect(previous, nullptr, this, nullptr);
+            previous->hide();
+            previous->deleteLater();
+      }
+      m_answerDialog = new QInputDialog(this);
+      QInputDialog *dialog = m_answerDialog.data();
       dialog->setAttribute(Qt::WA_DeleteOnClose);
       dialog->setInputMode(QInputDialog::IntInput);
       dialog->setWindowTitle(m_phase == SessionPhase::FinalWager
@@ -3516,6 +3724,8 @@ void GameScreen::connectHostSignals(MultiplayerHost *host)
       connect(session, &GameSession::pauseChanged, this,
               [this](bool paused, const PhaseState &state)
               { applyPause(paused, state.phase, state.remainingMs); });
+      connect(session, &GameSession::gameFinished, this,
+              &GameScreen::showGameFinished);
 }
 
 void GameScreen::connectClientSignals(MultiplayerClient *client)
@@ -3556,6 +3766,8 @@ void GameScreen::connectClientSignals(MultiplayerClient *client)
               &GameScreen::applyWagerPrompt);
       connect(client, &MultiplayerClient::snapshotApplied, this,
               &GameScreen::applySnapshot);
+      connect(client, &MultiplayerClient::finished, this,
+              &GameScreen::showGameFinished);
 }
 
 void GameScreen::emitNetworkAnswer(const AnswerSubmission &submission)

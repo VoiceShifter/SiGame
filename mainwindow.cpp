@@ -99,6 +99,8 @@ void MainWindow::loadSingleGame(int PlayersCount, const QString &GamepackPath,
                                   answerWaitDuration);
       stack->addWidget(gameScreen);
       stack->setCurrentWidget(gameScreen);
+      connect(gameScreen, &GameScreen::returnToMenuRequested, this,
+              &MainWindow::returnToMainMenu);
 }
 
 void MainWindow::loadSettings() {}
@@ -142,6 +144,8 @@ void MainWindow::loadHostGame(MultiplayerHost *host, const QString &packPath)
       stack->addWidget(gameScreen);
       stack->setCurrentWidget(gameScreen);
       gameScreen->bindHost(host);
+      connect(gameScreen, &GameScreen::returnToMenuRequested, this,
+              &MainWindow::returnToMainMenu);
 }
 
 void MainWindow::loadClientGame(MultiplayerClient *client,
@@ -162,11 +166,47 @@ void MainWindow::loadClientGame(MultiplayerClient *client,
       stack->addWidget(gameScreen);
       stack->setCurrentWidget(gameScreen);
       gameScreen->bindClient(client);
+      connect(gameScreen, &GameScreen::returnToMenuRequested, this,
+              &MainWindow::returnToMainMenu);
 }
 
 void MainWindow::returnToMainMenu()
 {
       QWidget *settingsScreen = stack->currentWidget();
+      if (settingsScreen == gameScreen)
+      {
+            if (hostScreen != nullptr && hostScreen->host() != nullptr)
+            {
+                  hostScreen->host()->stop();
+            }
+            if (joinScreen != nullptr && joinScreen->client() != nullptr)
+            {
+                  joinScreen->client()->disconnectFromHost();
+            }
+            stack->setCurrentWidget(mainScreen);
+            stack->removeWidget(gameScreen);
+            gameScreen->deleteLater();
+            gameScreen = nullptr;
+            if (singleScreen != nullptr)
+            {
+                  stack->removeWidget(singleScreen);
+                  singleScreen->deleteLater();
+                  singleScreen = nullptr;
+            }
+            if (hostScreen != nullptr)
+            {
+                  stack->removeWidget(hostScreen);
+                  hostScreen->deleteLater();
+                  hostScreen = nullptr;
+            }
+            if (joinScreen != nullptr)
+            {
+                  stack->removeWidget(joinScreen);
+                  joinScreen->deleteLater();
+                  joinScreen = nullptr;
+            }
+            return;
+      }
       if (settingsScreen == hostScreen)
       {
             if (hostScreen->host() != nullptr)

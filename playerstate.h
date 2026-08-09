@@ -38,6 +38,8 @@ struct PlayerState
       QString nickname;
       QByteArray profilePng;
       int balance{};
+      int correctAnswers{};
+      int wrongAnswers{};
       bool connected{};
       bool ready{};
       bool isPicker{};

@@ -93,6 +93,11 @@ target_sources(SiGame PRIVATE
     resources.qrc
     wasmpackimporter.h wasmpackimporter.cpp
 )
+if(EMSCRIPTEN)
+    target_sources(SiGame PRIVATE wasm_resources.qrc)
+    configure_file(Fonts/NotoColorEmoji.LICENSE.txt
+        ${CMAKE_CURRENT_BINARY_DIR}/NotoColorEmoji.LICENSE.txt COPYONLY)
+endif()
 
 target_link_libraries(SiGame PRIVATE Qt${QT_VERSION_MAJOR}::Widgets
     Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::WebSockets

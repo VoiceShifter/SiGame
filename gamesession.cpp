@@ -1621,12 +1621,14 @@ void GameSession::finishForAll()
             }
             if (correct)
             {
+                  ++state->correctAnswers;
                   state->balance += amount;
                   correctPlayers.push_back(id);
                   m_correctForCurrentQuestion.insert(id, true);
             }
             else
             {
+                  ++state->wrongAnswers;
                   state->balance -= amount;
                   m_wrongAmounts.insert(id, -amount);
                   state->mayAppeal = true;
@@ -1725,6 +1727,14 @@ void GameSession::applyNormalAnswer(const PlayerId &playerId,
       result.answerKind = question->answerType;
       result.submitted = submitted;
       result.remainingReactionMs = m_remainingReactionMs;
+      if (correct)
+      {
+            ++state->correctAnswers;
+      }
+      else
+      {
+            ++state->wrongAnswers;
+      }
 
       if (correct)
       {
@@ -1860,6 +1870,11 @@ void GameSession::finishAppeal(bool accepted)
       {
             result.correction = -2 * wrongAmount;
             appellant->balance += result.correction;
+            if (appellant->wrongAnswers > 0)
+            {
+                  --appellant->wrongAnswers;
+            }
+            ++appellant->correctAnswers;
             appellant->mayAppeal = false;
             m_nextPicker = appeal.appellant;
       }

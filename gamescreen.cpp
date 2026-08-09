@@ -386,9 +386,6 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                   playerPixmap.scaled(200, 200, Qt::KeepAspectRatio,
                                       Qt::SmoothTransformation));
             playerPfp->setScaledContents(1);
-            playerPfp->setProperty("singleSecretTargetIndex",
-                                   static_cast<int>(Index));
-            playerPfp->installEventFilter(this);
             applyPlayerGlow(playerPfp, PlayerGlow::None);
             const QString playerDisplayName =
                   Index == 0 && !Nickname.isEmpty()
@@ -396,6 +393,12 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
                         : tr("Player %1").arg(Index + 1);
             QLabel *playerName = new QLabel(playerDisplayName);
             QLabel *balanceLabel = new QLabel;
+            for (QLabel *label : {playerPfp, playerName, balanceLabel})
+            {
+                  label->setProperty("singleSecretTargetIndex",
+                                     static_cast<int>(Index));
+                  label->installEventFilter(this);
+            }
             QLabel *answerBubble = createAnswerBubble();
             playerLayout->addWidget(playerPfp);
             playerLayout->addWidget(playerName);
@@ -403,7 +406,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
             playerLayout->setStretch(0, 0);
             ui->PlayersLayout->addLayout(playerLayout);
             m_players.push_back({playerDisplayName, 0, false, playerPfp,
-                                 balanceLabel, answerBubble});
+                                 playerName, balanceLabel, answerBubble});
             updateBalanceLabel(m_players.back());
       }
 
@@ -1557,6 +1560,8 @@ void GameScreen::beginSingleSecretQuestion()
       for (Player &player : m_players)
       {
             player.avatarLabel->setCursor(Qt::PointingHandCursor);
+            player.nameLabel->setCursor(Qt::PointingHandCursor);
+            player.balanceLabel->setCursor(Qt::PointingHandCursor);
       }
       startPhaseTimer(GamePhase::SecretTargetSelection,
                       m_questionPickDuration);
@@ -1573,6 +1578,8 @@ void GameScreen::selectSingleSecretTarget(int playerIndex)
       for (Player &player : m_players)
       {
             player.avatarLabel->setCursor(Qt::ArrowCursor);
+            player.nameLabel->setCursor(Qt::ArrowCursor);
+            player.balanceLabel->setCursor(Qt::ArrowCursor);
       }
 
       const Question &question = currentQuestion();
@@ -1798,6 +1805,8 @@ void GameScreen::returnToBoard()
       for (Player &player : m_players)
       {
             player.avatarLabel->setCursor(Qt::ArrowCursor);
+            player.nameLabel->setCursor(Qt::ArrowCursor);
+            player.balanceLabel->setCursor(Qt::ArrowCursor);
       }
       ui->gameContentStack->setCurrentWidget(ui->boardPage);
       if (m_mode == GameScreenMode::SinglePlayer &&
@@ -3936,10 +3945,13 @@ void GameScreen::rebuildNetworkPlayerCards()
                   auto *layout = new QVBoxLayout;
                   auto *avatar = new QLabel;
                   avatar->setScaledContents(true);
-                  avatar->setProperty("secretTargetId", state.id);
-                  avatar->installEventFilter(this);
                   auto *name = new QLabel;
                   auto *balance = new QLabel;
+                  for (QLabel *label : {avatar, name, balance})
+                  {
+                        label->setProperty("secretTargetId", state.id);
+                        label->installEventFilter(this);
+                  }
                   QLabel *answerBubble = createAnswerBubble();
                   layout->addWidget(avatar);
                   layout->addWidget(name);
@@ -3987,10 +3999,14 @@ void GameScreen::rebuildNetworkPlayerCards()
             applyPlayerGlow(
                   avatar, m_playerGlows.value(state.id, PlayerGlow::None),
                   state.connected);
-            avatar->setCursor(m_secretTargetSelection && state.isPicker &&
-                                      state.id != m_localPlayerId
-                                    ? Qt::PointingHandCursor
-                                    : Qt::ArrowCursor);
+            const Qt::CursorShape cursor =
+                  m_secretTargetSelection && state.isPicker &&
+                              state.id != m_localPlayerId
+                        ? Qt::PointingHandCursor
+                        : Qt::ArrowCursor;
+            avatar->setCursor(cursor);
+            name->setCursor(cursor);
+            balance->setCursor(cursor);
             name->setText(state.nickname.isEmpty() ? tr("Unnamed")
                                                    : state.nickname);
             balance->setText(tr("Balance: %1").arg(state.balance));

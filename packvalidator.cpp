@@ -572,12 +572,8 @@ PackValidationResult PackValidator::validate(const QString &packPath)
                                                          .arg(location));
                                     }
                                     const NumberSet &price = secret.price;
-                                    const bool zeroOnly =
-                                          price.minimum == 0 &&
-                                          price.maximum == 0 && price.step == 0;
-                                    if (!zeroOnly &&
-                                        (price.minimum > price.maximum ||
-                                         price.step <= 0))
+                                    if (price.minimum > price.maximum ||
+                                        price.step < 0)
                                     {
                                           addError(result,
                                                    QObject::tr("%1 has an invalid "

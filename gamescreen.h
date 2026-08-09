@@ -137,6 +137,7 @@ class GameScreen : public QWidget
             int balance{};
             bool hasPassed{};
             QLabel *avatarLabel{};
+            QLabel *nameLabel{};
             QLabel *balanceLabel{};
             QLabel *answerBubble{};
             PlayerGlow glow{PlayerGlow::None};

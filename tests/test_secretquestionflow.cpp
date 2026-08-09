@@ -7,13 +7,14 @@ class SecretQuestionFlowTest : public QObject
       Q_OBJECT
 
     private:
-      static Game gameWithQuestionType(QuestionType type)
+      static Game gameWithQuestionType(QuestionType type,
+                                       const NumberSet &price)
       {
             Question question;
             question.price = 700;
             question.type = type;
             question.secretParameters = SecretQuestionParameters{
-                  QStringLiteral("exceptCurrent"), {100, 500, 100},
+                  QStringLiteral("exceptCurrent"), price,
                   QStringLiteral("Secret theme")};
             question.text = QStringLiteral("Question");
             question.rightAnswers.push_back(QStringLiteral("Answer"));
@@ -106,9 +107,11 @@ class SecretQuestionFlowTest : public QObject
       void ordersPrivateAndPublicSecretInformation()
       {
             GameSession secretSession(
-                  gameWithQuestionType(QuestionType::Secret), config());
+                  gameWithQuestionType(QuestionType::Secret, {400, 400, 0}),
+                  config());
             GameSession publicSession(
-                  gameWithQuestionType(QuestionType::SecretPublicPrice),
+                  gameWithQuestionType(QuestionType::SecretPublicPrice,
+                                       {100, 600, 0}),
                   config());
             addPlayers(secretSession);
             addPlayers(publicSession);
@@ -172,7 +175,7 @@ class SecretQuestionFlowTest : public QObject
             secretEvents.clear();
             publicEvents.clear();
             secretSession.submitSecretWager(
-                  secretTarget, 300, secretSession.questionSequence(),
+                  secretTarget, 400, secretSession.questionSequence(),
                   secretSession.nextActionId(secretTarget));
             publicSession.submitSecretWager(
                   publicTarget, 300, publicSession.questionSequence(),

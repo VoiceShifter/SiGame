@@ -134,7 +134,7 @@ class PackValidatorTest : public QObject
                   "<question price=\"100\" type=\"secret\"><params>"
                   "<param name=\"selectionMode\">exceptCurrent</param>"
                   "<param name=\"price\" type=\"numberSet\">"
-                  "<numberSet minimum=\"0\" maximum=\"0\" step=\"0\"/>"
+                  "<numberSet minimum=\"400\" maximum=\"400\" step=\"0\"/>"
                   "</param><param name=\"theme\">Secret theme</param>");
             createPack(pack, content);
 

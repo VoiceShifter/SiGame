@@ -640,13 +640,9 @@ void GameSession::submitSecretWager(PlayerId target, int amount,
             return;
       }
       const NumberSet &range = question->secretParameters->price;
-      if (range.minimum == 0 && range.maximum == 0 && range.step == 0)
-      {
-            qInfo() << "Secret question permits only a zero wager";
-      }
       const bool inRange = amount >= range.minimum && amount <= range.maximum;
       const bool validStep =
-            (range.step == 0 && range.minimum == 0 && range.maximum == 0) ||
+            range.step == 0 ||
             (range.step > 0 && (amount - range.minimum) % range.step == 0);
       if (!inRange || !validStep)
       {

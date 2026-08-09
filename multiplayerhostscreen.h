@@ -36,6 +36,8 @@ class MultiplayerHostScreen : public QWidget
 
     private:
       bool createHost();
+      void usePack(const QString &path);
+      void useProfile(const QString &path);
 
       QLineEdit *m_packEdit{};
       QLineEdit *m_nicknameEdit{};

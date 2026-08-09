@@ -1,5 +1,6 @@
 #include "singleplayerscreen.h"
 #include "ui_singleplayerscreen.h"
+#include "wasmpackimporter.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -118,6 +119,8 @@ SinglePlayerScreen::SinglePlayerScreen(QWidget *parent)
       : QWidget(parent), ui(new Ui::SinglePlayerScreen), GamepackPath{""}
 {
       ui->setupUi(this);
+      ui->profilePicturePreview->setPixmap(
+            QPixmap(QStringLiteral(":/Images/default.jpg")));
       connect(ui->horizontalSlider, &QSlider::sliderMoved, this,
               [this](int value)
               { ui->playerCount->setText(QString::number(value)); });
@@ -186,13 +189,31 @@ SinglePlayerScreen::~SinglePlayerScreen() { delete ui; }
 
 void SinglePlayerScreen::pickPack()
 {
-      QString fileName = QFileDialog::getExistingDirectory(
-            this, tr("Open pack"), "/home/username");
+#ifdef Q_OS_WASM
+      WasmPackImporter::choosePackDirectory(
+            this, [this](const QString &path, bool failed)
+            {
+                  if (failed)
+                  {
+                        QMessageBox::warning(
+                              this, tr("Pack import failed"),
+                              tr("The selected pack could not be imported by "
+                                 "the browser."));
+                  }
+                  else if (!path.isEmpty())
+                  {
+                        usePack(path, true);
+                  }
+            });
+#else
+      const QString fileName = QFileDialog::getExistingDirectory(
+            this, tr("Open pack"), QStringLiteral("/home/username"));
       if (fileName.isEmpty())
       {
             return;
       }
       usePack(fileName, true);
+#endif
 }
 
 void SinglePlayerScreen::usePack(const QString &path, bool showInvalidWarning,
@@ -221,14 +242,33 @@ void SinglePlayerScreen::usePack(const QString &path, bool showInvalidWarning,
 
 void SinglePlayerScreen::pickProfilePicture()
 {
+#ifdef Q_OS_WASM
+      WasmPackImporter::chooseProfileImage(
+            this, [this](const QString &path, bool failed)
+            {
+                  if (failed)
+                  {
+                        QMessageBox::warning(
+                              this, tr("Profile picture import failed"),
+                              tr("The selected profile picture could not be "
+                                 "imported by the browser."));
+                  }
+                  else if (!path.isEmpty())
+                  {
+                        useProfilePicture(path, true);
+                  }
+            });
+#else
       const QString fileName = QFileDialog::getOpenFileName(
-            this, tr("Open profile picture"), "/home/username",
+            this, tr("Open profile picture"),
+            QStringLiteral("/home/username"),
             tr("Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"));
       if (fileName.isEmpty())
       {
             return;
       }
       useProfilePicture(fileName, true);
+#endif
 }
 
 void SinglePlayerScreen::useProfilePicture(const QString &path,

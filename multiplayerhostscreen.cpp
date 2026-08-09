@@ -1,6 +1,7 @@
 #include "multiplayerhostscreen.h"
 
 #include "packmanifest.h"
+#include "wasmpackimporter.h"
 
 #include <QFileDialog>
 #include <QFormLayout>
@@ -9,6 +10,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
@@ -44,6 +46,8 @@ MultiplayerHostScreen::MultiplayerHostScreen(QWidget *parent)
       m_profilePreview = new QLabel(this);
       m_profilePreview->setFixedSize(64, 64);
       m_profilePreview->setScaledContents(true);
+      m_profilePreview->setPixmap(
+            QPixmap(QStringLiteral(":/Images/default.jpg")));
       auto *profileButton = new QPushButton(tr("Choose profile picture"), this);
       auto *profileRow = new QHBoxLayout;
       profileRow->addWidget(m_profilePreview);
@@ -106,12 +110,34 @@ MultiplayerHostScreen::MultiplayerHostScreen(QWidget *parent)
 
 void MultiplayerHostScreen::choosePack()
 {
+#ifdef Q_OS_WASM
+      WasmPackImporter::choosePackDirectory(
+            this, [this](const QString &path, bool failed)
+            {
+                  if (failed)
+                  {
+                        QMessageBox::warning(
+                              this, tr("Pack import failed"),
+                              tr("The selected pack could not be imported by "
+                                 "the browser."));
+                  }
+                  else if (!path.isEmpty())
+                  {
+                        usePack(path);
+                  }
+            });
+#else
       const QString path = QFileDialog::getExistingDirectory(this,
                                                                tr("Open pack"));
-      if (path.isEmpty())
+      if (!path.isEmpty())
       {
-            return;
+            usePack(path);
       }
+#endif
+}
+
+void MultiplayerHostScreen::usePack(const QString &path)
+{
       if (!isValidPackDirectory(path))
       {
             QMessageBox::warning(this, tr("Invalid pack"),
@@ -135,13 +161,35 @@ void MultiplayerHostScreen::choosePack()
 
 void MultiplayerHostScreen::chooseProfile()
 {
+#ifdef Q_OS_WASM
+      WasmPackImporter::chooseProfileImage(
+            this, [this](const QString &path, bool failed)
+            {
+                  if (failed)
+                  {
+                        QMessageBox::warning(
+                              this, tr("Profile picture import failed"),
+                              tr("The selected profile picture could not be "
+                                 "imported by the browser."));
+                  }
+                  else if (!path.isEmpty())
+                  {
+                        useProfile(path);
+                  }
+            });
+#else
       const QString path = QFileDialog::getOpenFileName(
             this, tr("Open profile picture"), QString(),
             tr("Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"));
-      if (path.isEmpty())
+      if (!path.isEmpty())
       {
-            return;
+            useProfile(path);
       }
+#endif
+}
+
+void MultiplayerHostScreen::useProfile(const QString &path)
+{
       const QImage image(path);
       if (image.isNull())
       {
@@ -212,8 +260,12 @@ bool MultiplayerHostScreen::createHost()
             return false;
       }
       m_hostButton->setText(tr("Start game"));
+#ifdef Q_OS_WASM
+      m_statusLabel->setText(tr("Connecting to the native network bridge..."));
+#else
       m_statusLabel->setText(tr("Lobby is listening."));
-      if (m_maxPlayersSpin->value() == 1)
+#endif
+      if (m_maxPlayersSpin->value() == 1 && m_host->isListening())
       {
             m_host->startGame();
       }
@@ -225,6 +277,11 @@ void MultiplayerHostScreen::hostOrStart()
       if (m_host == nullptr)
       {
             createHost();
+            return;
+      }
+      if (!m_host->isListening())
+      {
+            m_host->listen(MultiplayerProtocol::DefaultPort);
             return;
       }
       m_host->startGame();
@@ -263,6 +320,11 @@ void MultiplayerHostScreen::showListening(quint16 port,
 {
       m_statusLabel->setText(
             tr("Listening on %1:%2").arg(addresses.join(tr(", "))).arg(port));
+      if (m_host != nullptr && m_maxPlayersSpin->value() == 1 &&
+          !m_host->isStarted())
+      {
+            m_host->startGame();
+      }
 }
 
 void MultiplayerHostScreen::showError(const QString &error)

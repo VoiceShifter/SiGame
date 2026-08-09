@@ -47,6 +47,7 @@ class MainWindow : public QMainWindow
       void loadClientGame(MultiplayerClient *client, const QString &packPath);
       void returnToMainMenu();
       void showExitPopup();
+      void exitApplication();
 };
 
 #endif // MAINWINDOW_H

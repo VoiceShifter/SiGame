@@ -2,8 +2,24 @@
 #include "gamescreen.h"
 #include "singleplayerscreen.h"
 #include "ui_mainwindow.h"
+#include <QAbstractButton>
 #include <QMessageBox>
 #include <QShortcut>
+
+#ifdef Q_OS_WASM
+#include <emscripten.h>
+
+EM_JS(void, closeSiGameBrowserPage, (), {
+      try {
+            window.close();
+      } catch (error) {
+            console.debug('The browser did not allow the SiGame tab to close',
+                          error);
+      }
+      if (!window.closed)
+            window.location.replace('about:blank');
+});
+#endif
 
 MainWindow::MainWindow(QWidget *parent)
       : QMainWindow(parent), ui(new Ui::MainWindow), stack(new QStackedWidget),
@@ -20,6 +36,14 @@ MainWindow::MainWindow(QWidget *parent)
                             "changes will be lost."));
       exitPopup->setStandardButtons(QMessageBox::Yes | QMessageBox::No);
       exitPopup->setDefaultButton(QMessageBox::No);
+      connect(exitPopup, &QMessageBox::buttonClicked, this,
+              [this](QAbstractButton *button)
+              {
+                    if (exitPopup->standardButton(button) == QMessageBox::Yes)
+                    {
+                          exitApplication();
+                    }
+              });
 
       auto *quitShortcut = new QShortcut(QKeySequence("Ctrl+Q"), this);
       connect(quitShortcut, &QShortcut::activated, this,
@@ -181,16 +205,26 @@ void MainWindow::returnToMainMenu()
 
 void MainWindow::showExitPopup()
 {
-      if (exitPopup->exec() == QMessageBox::Yes)
+      if (!exitPopup->isVisible())
       {
-            if (hostScreen != nullptr && hostScreen->host() != nullptr)
-            {
-                  hostScreen->host()->stop();
-            }
-            if (joinScreen != nullptr && joinScreen->client() != nullptr)
-            {
-                  joinScreen->client()->disconnectFromHost();
-            }
-            close();
+            exitPopup->open();
       }
+}
+
+void MainWindow::exitApplication()
+{
+      if (hostScreen != nullptr && hostScreen->host() != nullptr)
+      {
+            hostScreen->host()->stop();
+      }
+      if (joinScreen != nullptr && joinScreen->client() != nullptr)
+      {
+            joinScreen->client()->disconnectFromHost();
+      }
+#ifdef Q_OS_WASM
+      hide();
+      closeSiGameBrowserPage();
+#else
+      close();
+#endif
 }

@@ -6,11 +6,23 @@
 #include <QCryptographicHash>
 #include <QImage>
 #include <QLocale>
+#ifndef Q_OS_WASM
 #include <QNetworkInterface>
+#endif
 #include <QRandomGenerator>
+#ifndef Q_OS_WASM
 #include <QTcpServer>
 #include <QTcpSocket>
+#endif
 #include <QUuid>
+#ifdef Q_OS_WASM
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
+#include <QUrl>
+#include <QWebSocket>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -107,8 +119,7 @@ MultiplayerHost::MultiplayerHost(const GameConfig &config, const Game &game,
       : QObject(parent), m_config(config), m_game(game), m_identity(identity),
         m_localPlayerId(
               QStringLiteral("player-host-%1").arg(identity.token.left(12))),
-        m_session(new GameSession(game, config, this)),
-        m_server(new QTcpServer(this))
+        m_session(new GameSession(game, config, this))
 {
       if (m_identity.token.isEmpty())
       {
@@ -129,8 +140,11 @@ MultiplayerHost::MultiplayerHost(const GameConfig &config, const Game &game,
       {
             m_session->skipToRound(static_cast<int>(m_game.rounds.size()) - 1);
       }
+#ifndef Q_OS_WASM
+      m_server = new QTcpServer(this);
       connect(m_server, &QTcpServer::newConnection, this,
               &MultiplayerHost::acceptPendingConnections);
+#endif
       m_syncTimer.setInterval(500);
       connect(&m_syncTimer, &QTimer::timeout, this,
               &MultiplayerHost::sendPhaseSync);
@@ -147,6 +161,40 @@ MultiplayerHost::~MultiplayerHost() { stop(); }
 
 bool MultiplayerHost::listen(quint16 port)
 {
+#ifdef Q_OS_WASM
+      if (m_bridgeListening ||
+          (m_bridgeSocket != nullptr &&
+           m_bridgeSocket->state() == QAbstractSocket::ConnectingState))
+      {
+            return true;
+      }
+      if (m_bridgeSocket != nullptr)
+      {
+            m_bridgeSocket->disconnect(this);
+            m_bridgeSocket->close();
+            m_bridgeSocket->deleteLater();
+      }
+      m_bridgeGamePort = port;
+      m_bridgeSocket = new QWebSocket(QStringLiteral("http://localhost"),
+                                      QWebSocketProtocol::VersionLatest, this);
+      connect(m_bridgeSocket, &QWebSocket::connected, this,
+              [this]() { sendBridgeCommand(QStringLiteral("listen")); });
+      connect(m_bridgeSocket, &QWebSocket::textMessageReceived, this,
+              &MultiplayerHost::handleBridgeMessage);
+      connect(m_bridgeSocket, &QWebSocket::disconnected, this,
+              &MultiplayerHost::handleBridgeDisconnected);
+      connect(m_bridgeSocket, &QWebSocket::errorOccurred, this,
+              [this](QAbstractSocket::SocketError)
+              {
+                    emit listeningFailed(
+                          tr("Native network bridge: %1")
+                                .arg(m_bridgeSocket->errorString()));
+              });
+      m_bridgeSocket->open(
+            QUrl(QStringLiteral("ws://127.0.0.1:%1")
+                       .arg(MultiplayerProtocol::BridgePort)));
+      return true;
+#else
       if (m_server->isListening())
       {
             return true;
@@ -160,6 +208,7 @@ bool MultiplayerHost::listen(quint16 port)
       emit listeningStarted(m_server->serverPort(), localAddresses());
       sendRoster();
       return true;
+#endif
 }
 
 void MultiplayerHost::stop()
@@ -181,10 +230,24 @@ void MultiplayerHost::stop()
             }
       }
       m_peers.clear();
+#ifndef Q_OS_WASM
       if (m_server != nullptr)
       {
             m_server->close();
       }
+#endif
+#ifdef Q_OS_WASM
+      m_bridgeConnections.clear();
+      m_bridgeListening = false;
+      if (m_bridgeSocket != nullptr)
+      {
+            sendBridgeCommand(QStringLiteral("stop"));
+            m_bridgeSocket->disconnect(this);
+            m_bridgeSocket->close();
+            m_bridgeSocket->deleteLater();
+            m_bridgeSocket = nullptr;
+      }
+#endif
       m_syncTimer.stop();
       stopPings();
       m_started = false;
@@ -194,6 +257,11 @@ void MultiplayerHost::startGame()
 {
       if (m_started)
       {
+            return;
+      }
+      if (!isListening())
+      {
+            emit listeningFailed(tr("The game is not listening yet"));
             return;
       }
       m_started = true;
@@ -209,7 +277,11 @@ bool MultiplayerHost::skipToRound(int roundIndex)
 
 bool MultiplayerHost::isListening() const
 {
+#ifdef Q_OS_WASM
+      return m_bridgeListening;
+#else
       return m_server != nullptr && m_server->isListening();
+#endif
 }
 
 void MultiplayerHost::requestSnapshot(PlayerId playerId)
@@ -333,6 +405,7 @@ void MultiplayerHost::onAppealVote(PlayerId playerId, quint64 appealId,
 
 void MultiplayerHost::acceptPendingConnections()
 {
+#ifndef Q_OS_WASM
       while (m_server->hasPendingConnections())
       {
             QTcpSocket *socket = m_server->nextPendingConnection();
@@ -348,7 +421,144 @@ void MultiplayerHost::acceptPendingConnections()
             connect(connection, &MultiplayerConnection::transportError, this,
                     &MultiplayerHost::handleTransportError);
       }
+#endif
 }
+
+#ifdef Q_OS_WASM
+void MultiplayerHost::handleBridgeMessage(const QString &message)
+{
+      QJsonParseError parseError;
+      const QJsonDocument document =
+            QJsonDocument::fromJson(message.toUtf8(), &parseError);
+      if (parseError.error != QJsonParseError::NoError || !document.isObject())
+      {
+            emit listeningFailed(
+                  tr("Invalid response from native network bridge"));
+            return;
+      }
+
+      const QJsonObject object = document.object();
+      const QString event = object.value(QStringLiteral("event")).toString();
+      bool idOk = false;
+      const quint64 id = object.value(QStringLiteral("connectionId"))
+                               .toString()
+                               .toULongLong(&idOk);
+      if (event == QStringLiteral("listening"))
+      {
+            QStringList addresses;
+            for (const QJsonValue &value :
+                 object.value(QStringLiteral("addresses")).toArray())
+            {
+                  addresses.push_back(value.toString());
+            }
+            m_bridgeListening = true;
+            startPings();
+            emit listeningStarted(
+                  static_cast<quint16>(
+                        object.value(QStringLiteral("port")).toInt()),
+                  addresses);
+            sendRoster();
+            return;
+      }
+      if (event == QStringLiteral("accepted") && idOk && id != 0)
+      {
+            registerBridgePeer(
+                  id, QHostAddress(
+                            object.value(QStringLiteral("peerAddress"))
+                                  .toString()));
+            return;
+      }
+      if (event == QStringLiteral("line") && idOk)
+      {
+            MultiplayerConnection *connection = m_bridgeConnections.value(id);
+            if (connection != nullptr)
+            {
+                  connection->deliverBridgeLine(
+                        object.value(QStringLiteral("line")).toString().toUtf8());
+            }
+            return;
+      }
+      if (event == QStringLiteral("disconnected") && idOk)
+      {
+            MultiplayerConnection *connection = m_bridgeConnections.take(id);
+            if (connection != nullptr)
+            {
+                  connection->bridgeDisconnected();
+            }
+            return;
+      }
+      if (event == QStringLiteral("error"))
+      {
+            const QString error =
+                  object.value(QStringLiteral("message")).toString();
+            MultiplayerConnection *connection =
+                  idOk ? m_bridgeConnections.value(id) : nullptr;
+            if (connection != nullptr)
+            {
+                  connection->bridgeTransportError(error);
+            }
+            else
+            {
+                  emit listeningFailed(tr("Native network bridge: %1")
+                                             .arg(error));
+            }
+      }
+}
+
+void MultiplayerHost::handleBridgeDisconnected()
+{
+      m_bridgeListening = false;
+      const auto connections = m_bridgeConnections;
+      m_bridgeConnections.clear();
+      for (MultiplayerConnection *connection : connections)
+      {
+            connection->bridgeDisconnected();
+      }
+      stopPings();
+      emit listeningFailed(tr("The native network bridge disconnected"));
+}
+
+void MultiplayerHost::sendBridgeCommand(const QString &command)
+{
+      if (m_bridgeSocket == nullptr ||
+          m_bridgeSocket->state() != QAbstractSocket::ConnectedState)
+      {
+            return;
+      }
+      QJsonObject object;
+      object.insert(QStringLiteral("command"), command);
+      if (command == QStringLiteral("listen"))
+      {
+            object.insert(QStringLiteral("port"),
+                          static_cast<int>(m_bridgeGamePort));
+      }
+      m_bridgeSocket->sendTextMessage(QString::fromUtf8(
+            QJsonDocument(object).toJson(QJsonDocument::Compact)));
+}
+
+void MultiplayerHost::registerBridgePeer(
+      quint64 connectionId, const QHostAddress &peerAddress)
+{
+      if (m_bridgeConnections.contains(connectionId) ||
+          m_bridgeSocket == nullptr)
+      {
+            return;
+      }
+      auto *connection = new MultiplayerConnection(this);
+      Peer peer;
+      peer.connection = connection;
+      m_peers.insert(connection, peer);
+      m_bridgeConnections.insert(connectionId, connection);
+      connect(connection, &MultiplayerConnection::lineReceived, this,
+              &MultiplayerHost::handleLine);
+      connect(connection, &MultiplayerConnection::disconnected, this,
+              &MultiplayerHost::handleDisconnected);
+      connect(connection, &MultiplayerConnection::transportError, this,
+              &MultiplayerHost::handleTransportError);
+      connection->adoptBridgeConnection(m_bridgeSocket, connectionId,
+                                        peerAddress);
+}
+#endif
 
 void MultiplayerHost::handleLine(const QByteArray &line)
 {
@@ -1756,15 +1966,19 @@ void MultiplayerHost::connectSessionSignals()
 
 void MultiplayerHost::startPings()
 {
-      if (m_pingThread != nullptr)
+      if (m_pingWorker != nullptr)
       {
             return;
       }
+#ifdef Q_OS_WASM
+      m_pingWorker = new PingWorker(this);
+#else
       m_pingThread = new QThread(this);
       m_pingWorker = new PingWorker;
       m_pingWorker->moveToThread(m_pingThread);
       connect(m_pingThread, &QThread::started, m_pingWorker,
               &PingWorker::start);
+#endif
       connect(m_pingWorker, &PingWorker::pingRequested, this,
               [this](const PlayerId &playerId, quint64 pingId)
               {
@@ -1807,15 +2021,24 @@ void MultiplayerHost::startPings()
                     }
                     worker->setPlayers(remote);
               });
+#ifdef Q_OS_WASM
+      m_pingWorker->start();
+#else
       m_pingThread->start();
+#endif
 }
 
 void MultiplayerHost::stopPings()
 {
-      if (m_pingThread == nullptr)
+      if (m_pingWorker == nullptr)
       {
             return;
       }
+#ifdef Q_OS_WASM
+      m_pingWorker->stop();
+      delete m_pingWorker;
+      m_pingWorker = nullptr;
+#else
       QMetaObject::invokeMethod(m_pingWorker, "stop",
                                 Qt::BlockingQueuedConnection);
       m_pingThread->quit();
@@ -1824,6 +2047,7 @@ void MultiplayerHost::stopPings()
       m_pingWorker = nullptr;
       m_pingThread->deleteLater();
       m_pingThread = nullptr;
+#endif
       m_remoteRtt.clear();
 }
 
@@ -1864,6 +2088,7 @@ QString MultiplayerHost::boolValue(bool value)
 QStringList MultiplayerHost::localAddresses()
 {
       QStringList addresses;
+#ifndef Q_OS_WASM
       for (const QHostAddress &address : QNetworkInterface::allAddresses())
       {
             if (address.protocol() == QAbstractSocket::IPv4Protocol &&
@@ -1872,6 +2097,7 @@ QStringList MultiplayerHost::localAddresses()
                   addresses.push_back(address.toString());
             }
       }
+#endif
       if (addresses.isEmpty())
       {
             addresses.push_back(

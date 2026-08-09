@@ -234,7 +234,7 @@ void MultiplayerClient::handleDisconnected()
 
 void MultiplayerClient::handleTransportError(const QString &message)
 {
-      emit protocolError(QStringLiteral("BAD_FRAME"), message);
+      emit protocolError(QStringLiteral("TRANSPORT_ERROR"), message);
 }
 
 void MultiplayerClient::sendHello()

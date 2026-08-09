@@ -19,6 +19,9 @@
 
 class PingWorker;
 class QTcpServer;
+#ifdef Q_OS_WASM
+class QWebSocket;
+#endif
 
 struct SessionEvent
 {
@@ -92,6 +95,10 @@ class MultiplayerHost : public QObject
       void handleDisconnected();
       void handleTransportError(const QString &message);
       void sendPhaseSync();
+#ifdef Q_OS_WASM
+      void handleBridgeMessage(const QString &message);
+      void handleBridgeDisconnected();
+#endif
 
     private:
       struct Peer
@@ -145,6 +152,11 @@ class MultiplayerHost : public QObject
                             const QMap<QString, QString> &fields);
       static QString boolValue(bool value);
       static QStringList localAddresses();
+#ifdef Q_OS_WASM
+      void sendBridgeCommand(const QString &command);
+      void registerBridgePeer(quint64 connectionId,
+                              const QHostAddress &peerAddress);
+#endif
 
       GameConfig m_config;
       Game m_game;
@@ -152,6 +164,12 @@ class MultiplayerHost : public QObject
       PlayerId m_localPlayerId;
       GameSession *m_session{};
       QTcpServer *m_server{};
+#ifdef Q_OS_WASM
+      QWebSocket *m_bridgeSocket{};
+      QHash<quint64, MultiplayerConnection *> m_bridgeConnections;
+      quint16 m_bridgeGamePort{};
+      bool m_bridgeListening{};
+#endif
       QHash<MultiplayerConnection *, Peer> m_peers;
       quint64 m_rosterSequence{};
       QTimer m_syncTimer;

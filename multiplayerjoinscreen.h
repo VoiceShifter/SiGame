@@ -36,6 +36,8 @@ class MultiplayerJoinScreen : public QWidget
 
     private:
       bool preparePack();
+      void usePack(const QString &path);
+      void useProfile(const QString &path);
 
       QLineEdit *m_addressEdit{};
       QSpinBox *m_portSpin{};

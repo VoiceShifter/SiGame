@@ -1,6 +1,7 @@
 #include "multiplayerjoinscreen.h"
 
 #include "packmanifest.h"
+#include "wasmpackimporter.h"
 
 #include <QFileDialog>
 #include <QFormLayout>
@@ -9,6 +10,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QSettings>
@@ -56,6 +58,8 @@ MultiplayerJoinScreen::MultiplayerJoinScreen(QWidget *parent)
       m_profilePreview = new QLabel(this);
       m_profilePreview->setFixedSize(64, 64);
       m_profilePreview->setScaledContents(true);
+      m_profilePreview->setPixmap(
+            QPixmap(QStringLiteral(":/Images/default.jpg")));
       auto *profileButton = new QPushButton(tr("Choose profile picture"), this);
       auto *profileRow = new QHBoxLayout;
       profileRow->addWidget(m_profilePreview);
@@ -102,12 +106,34 @@ MultiplayerJoinScreen::MultiplayerJoinScreen(QWidget *parent)
 
 void MultiplayerJoinScreen::choosePack()
 {
+#ifdef Q_OS_WASM
+      WasmPackImporter::choosePackDirectory(
+            this, [this](const QString &path, bool failed)
+            {
+                  if (failed)
+                  {
+                        QMessageBox::warning(
+                              this, tr("Pack import failed"),
+                              tr("The selected pack could not be imported by "
+                                 "the browser."));
+                  }
+                  else if (!path.isEmpty())
+                  {
+                        usePack(path);
+                  }
+            });
+#else
       const QString path = QFileDialog::getExistingDirectory(this,
                                                                tr("Open pack"));
-      if (path.isEmpty())
+      if (!path.isEmpty())
       {
-            return;
+            usePack(path);
       }
+#endif
+}
+
+void MultiplayerJoinScreen::usePack(const QString &path)
+{
       if (!isValidPackDirectory(path))
       {
             QMessageBox::warning(this, tr("Invalid pack"),
@@ -132,13 +158,35 @@ void MultiplayerJoinScreen::choosePack()
 
 void MultiplayerJoinScreen::chooseProfile()
 {
+#ifdef Q_OS_WASM
+      WasmPackImporter::chooseProfileImage(
+            this, [this](const QString &path, bool failed)
+            {
+                  if (failed)
+                  {
+                        QMessageBox::warning(
+                              this, tr("Profile picture import failed"),
+                              tr("The selected profile picture could not be "
+                                 "imported by the browser."));
+                  }
+                  else if (!path.isEmpty())
+                  {
+                        useProfile(path);
+                  }
+            });
+#else
       const QString path = QFileDialog::getOpenFileName(
             this, tr("Open profile picture"), QString(),
             tr("Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"));
-      if (path.isEmpty())
+      if (!path.isEmpty())
       {
-            return;
+            useProfile(path);
       }
+#endif
+}
+
+void MultiplayerJoinScreen::useProfile(const QString &path)
+{
       const QImage image(path);
       if (image.isNull())
       {

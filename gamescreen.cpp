@@ -326,7 +326,7 @@ GameScreen::GameScreen(signed int PlayerCount, const QString &GamepackPath,
       ui->splitter->handle(1)->setEnabled(false);
       ui->splitter->handle(1)->setCursor(Qt::ArrowCursor);
       ui->PlayersLayout->setAlignment(Qt::AlignHCenter);
-      QImage Image("Images/default.jpg");
+      QImage Image(QStringLiteral(":/Images/default.jpg"));
       QPixmap pix                 = QPixmap::fromImage(Image);
       const QMargins judgeMargins = ui->JudgeLayout->contentsMargins();
       const QMargins photoMargins = ui->verticalLayout_2->contentsMargins();
@@ -3323,7 +3323,7 @@ void GameScreen::rebuildNetworkPlayerCards()
             }
       }
 
-      const QPixmap fallback(QStringLiteral("Images/default.jpg"));
+      const QPixmap fallback(QStringLiteral(":/Images/default.jpg"));
       for (const PlayerState &state : m_networkPlayers)
       {
             QLabel *avatar = m_networkAvatarLabels.value(state.id);

@@ -15,6 +15,7 @@ constexpr int MaxControlLineBytes = 64 * 1024;
 constexpr int MaxProfileBytes = 4 * 1024 * 1024;
 constexpr int MaxProfileChunkBytes = 32 * 1024;
 constexpr quint16 DefaultPort = 32323;
+constexpr quint16 BridgePort = 32324;
 
 struct Frame
 {

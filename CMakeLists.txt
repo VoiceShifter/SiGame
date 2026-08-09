@@ -9,8 +9,8 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network Multimedia MultimediaWidgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network Multimedia MultimediaWidgets)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network WebSockets Multimedia MultimediaWidgets)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network WebSockets Multimedia MultimediaWidgets)
 
 set(PROJECT_SOURCES
         main.cpp
@@ -89,9 +89,37 @@ else()
     endif()
 endif()
 
+target_sources(SiGame PRIVATE
+    resources.qrc
+    wasmpackimporter.h wasmpackimporter.cpp
+)
+
 target_link_libraries(SiGame PRIVATE Qt${QT_VERSION_MAJOR}::Widgets
-    Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::Multimedia
-    Qt${QT_VERSION_MAJOR}::MultimediaWidgets)
+    Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::WebSockets
+    Qt${QT_VERSION_MAJOR}::Multimedia Qt${QT_VERSION_MAJOR}::MultimediaWidgets)
+
+if(NOT EMSCRIPTEN AND NOT ANDROID AND NOT IOS)
+    if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
+        qt_add_executable(SiGameBridge
+            MANUAL_FINALIZATION
+            networkbridgemain.cpp
+            networkbridgeserver.h networkbridgeserver.cpp
+            multiplayerconnection.h multiplayerconnection.cpp
+            multiplayerprotocol.h multiplayerprotocol.cpp
+            playerstate.h
+        )
+    else()
+        add_executable(SiGameBridge
+            networkbridgemain.cpp
+            networkbridgeserver.h networkbridgeserver.cpp
+            multiplayerconnection.h multiplayerconnection.cpp
+            multiplayerprotocol.h multiplayerprotocol.cpp
+            playerstate.h
+        )
+    endif()
+    target_link_libraries(SiGameBridge PRIVATE Qt${QT_VERSION_MAJOR}::Network
+        Qt${QT_VERSION_MAJOR}::WebSockets)
+endif()
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
 # If you are developing for iOS or macOS you should consider setting an
@@ -108,7 +136,11 @@ set_target_properties(SiGame PROPERTIES
 )
 
 include(GNUInstallDirs)
-install(TARGETS SiGame
+set(SIGAME_INSTALL_TARGETS SiGame)
+if(TARGET SiGameBridge)
+    list(APPEND SIGAME_INSTALL_TARGETS SiGameBridge)
+endif()
+install(TARGETS ${SIGAME_INSTALL_TARGETS}
     BUNDLE DESTINATION .
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -116,4 +148,7 @@ install(TARGETS SiGame
 
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(SiGame)
+    if(TARGET SiGameBridge)
+        qt_finalize_executable(SiGameBridge)
+    endif()
 endif()
